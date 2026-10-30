@@ -1,0 +1,44 @@
+# Build output
+/wool
+/dist/
+/build/
+*.exe
+*.test
+*.out
+
+# Test and coverage artifacts
+coverage.*
+*.coverprofile
+profile.cov
+
+# Personal configuration (config.example.toml is tracked)
+/config.toml
+*.local.toml
+.env
+.env.*
+
+# Model weights and runtime data kept inside the project
+*.gguf
+/models/
+/data/
+/logs/
+*.log
+
+# Go workspace files (local development only)
+go.work
+go.work.sum
+
+# Editors and IDEs
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS metadata
+.DS_Store
+Thumbs.db
+
+# Temporary files
+*.tmp
+*.bak

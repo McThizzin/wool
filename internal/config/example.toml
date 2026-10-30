@@ -1,0 +1,223 @@
+# wool config
+#
+# Models are GGUF files. Presets are standalone launch recipes. The router
+# gets one section per [models.*] entry and per-model context/sampling from
+# the same tables.
+#
+# Launch option inheritance: [defaults] -> [models.<id>] -> [presets.<name>].
+# Sampling overrides are partial: set only the keys you want to change.
+
+[app]
+theme = "mocha"
+nerd_fonts = true
+model_dirs = ["~/models"]
+llama_server = "llama-server"
+log_lines = 10000
+
+[server]
+host = "127.0.0.1"
+port = 8080
+auto_port = true
+startup_timeout = "120s"
+poll_interval = "5s"
+
+# ---------------------------------------------------------------------------
+# Shared launch defaults
+# ---------------------------------------------------------------------------
+
+[defaults]
+gpu_layers = 999
+n_cpu_moe = 0
+threads = 0          # 0 = nproc
+threads_batch = 0    # 0 = same as threads
+batch_size = 4096
+ubatch_size = 256
+parallel = 1
+flash_attn = "on"
+cache_type_k = "q4_0"
+cache_type_v = "q4_0"
+jinja = true
+metrics = true
+
+[defaults.sampling]
+temp = 1.0
+top_p = 0.95
+top_k = 20
+min_p = 0.05
+repeat_penalty = 1.1
+presence_penalty = 0.0
+frequency_penalty = 0.0
+typical_p = 1.0
+mirostat = 0
+seed = -1
+
+# ---------------------------------------------------------------------------
+# Models
+# ---------------------------------------------------------------------------
+# These are starting points, not benchmarked optima. The fit estimate will
+# flag contexts that do not fit the 8 GiB card.
+
+[models.gemma-4-heretic]
+path = "~/models/gemma-4-heretic.gguf"
+alias = "gemma-heretic"
+ctx = 32768
+
+# Gemma-family sampling tends to prefer a wider top_k and no min_p floor.
+[models.gemma-4-heretic.sampling]
+top_k = 64
+min_p = 0.0
+
+[models.gemma-4-e4b-unsloth]
+# Not currently present in ~/models; `wool doctor` will warn.
+path = "~/models/gemma-4-E4B-unsloth.gguf"
+alias = "gemma-unsloth"
+ctx = 32768
+
+[models.gemma-4-e4b-unsloth.sampling]
+top_k = 64
+min_p = 0.0
+
+[models.qwen35-4b-mtp]
+path = "~/models/Qwen3.5-4B-MTP.gguf"
+alias = "qwen3.5-MTP"
+ctx = 65536
+
+# MTP speculative decoding is built into this model.
+[models.qwen35-4b-mtp.extra]
+spec-type = "draft-mtp"
+spec-draft-n-max = "1"
+
+[models.qwen35-4b-mtp.sampling]
+temp = 0.7
+top_p = 0.8
+top_k = 20
+min_p = 0.0
+repeat_penalty = 1.05
+
+[models.ornith-15-9b]
+path = "~/models/Ornith-1.5-9B.gguf"
+alias = "Ornith-9B"
+ctx = 32768
+
+[models.ornith-15-9b.sampling]
+temp = 0.8
+top_p = 0.9
+top_k = 40
+min_p = 0.0
+repeat_penalty = 1.05
+
+[models.qwen3-4b-cyber]
+path = "~/models/Qwen3-4B-cybersecurity-heretic.gguf"
+alias = "Qwen-Cyber"
+ctx = 65536
+
+[models.qwen3-4b-cyber.sampling]
+temp = 0.7
+top_p = 0.9
+top_k = 20
+min_p = 0.0
+repeat_penalty = 1.05
+
+[models.lfm25-24b-a2b]
+path = "~/models/LFM2.5-24B-A2B-UD-Q4_K_XL.gguf"
+alias = "LFM2.5-24B-MoE"
+ctx = 32768
+n_cpu_moe = 999      # keep MoE expert weights on CPU; fit attention on 8 GiB
+batch_size = 2048
+ubatch_size = 256
+
+[models.lfm25-24b-a2b.sampling]
+temp = 0.8
+top_p = 0.9
+top_k = 40
+min_p = 0.0
+repeat_penalty = 1.05
+
+# ---------------------------------------------------------------------------
+# Standalone presets
+# ---------------------------------------------------------------------------
+# Context variants stay here because they are one-off launches. Router mode
+# uses the [models.*] context instead of loading the same file twice.
+
+[presets.gemma-heretic-32k]
+model = "gemma-4-heretic"
+ctx = 32768
+
+[presets.gemma-heretic-65k]
+model = "gemma-4-heretic"
+ctx = 65536
+
+[presets.gemma-unsloth-32k]
+model = "gemma-4-e4b-unsloth"
+ctx = 32768
+
+[presets.gemma-unsloth-16k]
+model = "gemma-4-e4b-unsloth"
+ctx = 16384
+
+[presets.qwen35-mtp-32k]
+model = "qwen35-4b-mtp"
+ctx = 32768
+
+[presets.qwen35-mtp-65k]
+model = "qwen35-4b-mtp"
+ctx = 65536
+
+[presets.ornith-15-9b-32k]
+model = "ornith-15-9b"
+ctx = 32768
+
+# Experimental on 8 GiB VRAM; use the fit estimate before launching.
+[presets.ornith-15-9b-65k]
+model = "ornith-15-9b"
+ctx = 65536
+
+[presets.qwen-cyber-32k]
+model = "qwen3-4b-cyber"
+ctx = 32768
+
+[presets.qwen-cyber-65k]
+model = "qwen3-4b-cyber"
+ctx = 65536
+
+[presets.lfm25-24b-moe-32k]
+model = "lfm25-24b-a2b"
+ctx = 32768
+
+# Experimental on 8 GiB VRAM; the 24B MoE model needs CPU expert offload.
+[presets.lfm25-24b-moe-65k]
+model = "lfm25-24b-a2b"
+ctx = 65536
+
+# ---------------------------------------------------------------------------
+# Router
+# ---------------------------------------------------------------------------
+# Router mode loads models on demand from the generated models.ini.
+# 8 GiB VRAM makes one loaded model the sane default.
+
+[router]
+models_max = 1
+memory_margin_mib = 512
+autoload = false
+sleep_idle_seconds = -1
+metrics = true
+
+# ---------------------------------------------------------------------------
+# Custom themes
+# ---------------------------------------------------------------------------
+# A custom theme starts from a built-in (mocha, tokyo, gruvbox, nord) or from
+# another custom theme, then overrides palette entries. Built-in names cannot
+# be redefined. Use `t` or `/theme <name>` to switch, or set app.theme above.
+#
+# Colors accept "#rgb", "#rrggbb", "#rrggbbaa" or a 0-255 terminal index.
+# Keys: border, accent, text, dim, badge_fg, red, yellow, green, cyan, blue,
+# mauve, pink, orange, teal.
+
+# [themes.dusk]
+# base = "tokyo"
+#
+# [themes.dusk.colors]
+# accent = "#ff9e64"
+# border = "#565f89"
+# text = "#d5d6db"
+# dim = "#6b7089"
