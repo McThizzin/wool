@@ -234,6 +234,8 @@ internal/ui/       panel, bar, sparkline and layout helpers
 docs/DESIGN.md     architecture and behavior details
 docs/roadmap.md    sequenced milestones, priorities and exit criteria
 docs/features/     one spec per planned feature, plus the feature index
+docs/RELEASING.md  release checklist and tagging steps
+.github/workflows/ CI and tagged release automation
 ```
 
 ## Testing
