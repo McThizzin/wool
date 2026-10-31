@@ -173,11 +173,11 @@ Why this order:
 **Outcome:** the current foundation is a reproducible release, so later
 milestones have a known-good starting point.
 
-- [ ] GitHub Actions workflow: `gofmt -l .`, `go vet ./...`, `go build ./...`,
+- [x] GitHub Actions workflow: `gofmt -l .`, `go vet ./...`, `go build ./...`,
       `go test -count=1 ./...` on push and pull request.
 - [ ] Tag `v0.1.0` with `-ldflags` setting `version`, `commit` and `date`.
-- [ ] Verify the README quickstart from a clean clone and a fresh XDG directory.
-- [ ] Add a short release checklist (tag, build, notes, artifact).
+- [x] Verify the README quickstart from a clean clone and a fresh XDG directory.
+- [x] Add a short release checklist (tag, build, notes, artifact).
 
 **Exit criteria:** green CI on `main`; `v0.1.0` tagged; a clean clone builds and
 passes tests; `wool version` reports the tag.
