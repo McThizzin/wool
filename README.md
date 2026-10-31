@@ -232,6 +232,8 @@ internal/doctor/   readiness checks
 internal/theme/    palettes, styles, icons, custom themes
 internal/ui/       panel, bar, sparkline and layout helpers
 docs/DESIGN.md     architecture and behavior details
+docs/roadmap.md    sequenced milestones, priorities and exit criteria
+docs/features/     one spec per planned feature, plus the feature index
 ```
 
 ## Testing
@@ -253,4 +255,4 @@ Tests cover config parsing/merging/editing, GGUF metadata and hybrid KV estimati
 - Standalone servers are not automatically restarted; router-managed models are supervised by `llama-server` itself.
 - VRAM estimates remain conservative for MoE CPU offload and speculative decoding.
 
-See [`docs/DESIGN.md`](docs/DESIGN.md) for the full design, lifecycle, and config reference.
+See [`docs/DESIGN.md`](docs/DESIGN.md) for the full design, lifecycle, and config reference, and [`docs/roadmap.md`](docs/roadmap.md) for what is planned and in what order.

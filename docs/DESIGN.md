@@ -577,6 +577,9 @@ wool router stop
 
 ## Known limitations and next steps
 
+See [`roadmap.md`](roadmap.md) for the sequenced plan, priorities and exit
+criteria. The limitations below are the current state, not the plan.
+
 - The VRAM estimate is conservative. Hybrid recurrent layers are modelled,
   but MoE CPU offload, unused MTP tensors and speculative decoding buffers are
   not; sysfs VRAM right after load can read lower before mmap pages are
