@@ -186,6 +186,12 @@ while an explicitly set zero or false is preserved. Sampling is merged field
 by field the same way, so a preset can change `temp` without restating the
 other sampler values.
 
+Built-in defaults are a separate lowest layer, not values written into
+`c.Defaults` while loading. That keeps an explicit `[defaults]` key
+distinguishable from a built-in value. `config.ResolveDetailed` returns the
+resolved options plus a source map (`built-in`, `defaults`, `model`, `preset`)
+used by the editor and `wool config explain`.
+
 After merging:
 
 - `threads = 0` becomes `runtime.NumCPU()`;
@@ -209,9 +215,11 @@ config can be prepared before the weights are downloaded.
 
 The TUI editor writes through `config.SetValue`, a small TOML-aware editor
 that changes only the requested key and preserves the rest of the file's
-comments and ordering. After a save the config is reloaded and the relevant
-caches are invalidated. The TOML file remains the source of truth; there is
-no hidden state database.
+comments and ordering. `config.RemoveValue` is its counterpart: it deletes one
+scalar key, leaves an empty table header in place, and refuses multi-line or
+inline collection values. After a save or reset the config is reloaded and the
+relevant caches are invalidated. The TOML file remains the source of truth;
+there is no hidden state database.
 
 ## Single-server launches
 
@@ -453,17 +461,16 @@ completion for command names and model/preset IDs.
 
 ### Editor
 
-The editor shows the resolved values for the selected preset or model. Fields
-that are inherited from a lower layer are marked `inherited`. Changing a
-field writes the key (and, for sampling, the nested table) into the TOML file
-through `config.SetValue`, reloads the config, and reopens the editor at the
-same selection. Booleans toggle directly; numbers and strings use a text
-input with validation. Because the editor writes the file, edits are visible
-to the CLI and survive a restart.
-
-The TUI editor writes a concrete value even when the field was inherited; to
-remove an override later, delete the key in the TOML file. This is a v1
-trade-off that keeps the editor simple.
+The editor shows the resolved values for the selected preset or model. Every
+field is labelled with its source: `built-in`, `defaults`, `model` or
+`preset`. Changing a field writes the key (and, for sampling, the nested
+table) into the TOML file through `config.SetValue`, reloads the config, and
+reopens the editor at the same selection. Booleans toggle directly; numbers
+and strings use a text input with validation. `backspace` or `delete` on a
+field owned by the current table calls `config.RemoveValue`, so the value
+falls back to the next layer. Fields from a lower layer cannot be reset from
+this table. Because the editor writes the file, edits are visible to the CLI
+and survive a restart.
 
 ## Hardware telemetry
 
@@ -542,6 +549,7 @@ wool logs [name] [-n N] [-f]         show a server log
 wool router [start|stop|status|models|load ID|unload ID|reload|ini]
 wool config path                     print the config path
 wool config init [--force] [PATH]    write a sample config
+wool config explain TARGET [--json]  show each value and its source layer
 wool version
 ```
 
@@ -550,9 +558,10 @@ wool version
 
 ## Testing
 
-- `go test ./...` covers config parsing/merging/edits, GGUF metadata and
-  estimates, argv/INI generation, router metrics parsing, daemon lifecycle
-  and PID validation, sysinfo parsing, and TUI rendering at multiple sizes.
+- `go test ./...` covers config parsing/merging/edits, provenance and key
+  removal, GGUF metadata and estimates, argv/INI generation, router metrics
+  parsing, daemon lifecycle and PID validation, sysinfo parsing, and TUI
+  rendering at multiple sizes.
 - One view test renders every tab at 120x40, 100x30, 80x24, 60x20 and 40x12
   and asserts that no line exceeds the terminal width.
 - Editor tests write to a temporary config and reload it to verify the TOML
@@ -587,7 +596,8 @@ criteria. The limitations below are the current state, not the plan.
 - Only AMD sysfs telemetry is implemented; NVIDIA/Intel need new backends.
 - The TUI manages one standalone server and one router, not arbitrary named
   instances. The daemon layer already uses names and can grow this later.
-- Editing always writes concrete values; there is no "remove override" action.
+- The editor can reset launch-option overrides, but not `model`, `path`,
+  `alias` or `extra` keys.
 - There is no automatic restart/supervision of the standalone server in v1.
   Router-managed models are supervised by `llama-server` itself.
 - Logs are tailed from disk on a timer rather than streamed; this is simple

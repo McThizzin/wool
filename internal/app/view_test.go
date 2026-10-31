@@ -96,7 +96,9 @@ func TestEditorOverlayAndSave(t *testing.T) {
 	if m.editor == nil {
 		t.Fatal("editor did not open")
 	}
-	checkView(t, m, 110, 34)
+	for _, size := range [][2]int{{110, 34}, {80, 24}, {60, 20}, {40, 12}} {
+		checkView(t, m, size[0], size[1])
+	}
 
 	// Select ctx, type a new value and save.
 	idx := -1
@@ -159,6 +161,112 @@ func TestEditorRejectsBadNumber(t *testing.T) {
 	if !m.editor.editing {
 		t.Fatal("editor should stay in edit mode after an error")
 	}
+}
+
+func TestEditorShowsSourcesAndResets(t *testing.T) {
+	m := testModel(t)
+	m.setTab(tabPresets)
+	m.presetSel = indexOf(m.presets, "gemma-heretic-32k")
+	if m.presetSel < 0 {
+		t.Fatal("example preset missing")
+	}
+	m.openEditor()
+	if m.editor == nil {
+		t.Fatal("editor did not open")
+	}
+	ctx := editorFieldIndex(t, m, "ctx")
+	if got := m.editor.fields[ctx].source; got.Source != config.SourcePreset || got.Layer != "presets.gemma-heretic-32k" {
+		t.Fatalf("ctx source = %+v", got)
+	}
+	batch := editorFieldIndex(t, m, "batch_size")
+	if got := m.editor.fields[batch].source; got.Source != config.SourceDefaults {
+		t.Fatalf("batch_size source = %+v", got)
+	}
+	m.width, m.height = 110, 34
+	if view := m.View(); !strings.Contains(view, "preset") || !strings.Contains(view, "defaults") {
+		t.Fatalf("source labels missing from editor:\n%s", view)
+	}
+
+	m.editor.sel = ctx
+	if _, _ = m.updateEditor(tea.KeyMsg{Type: tea.KeyBackspace}); m.editor == nil {
+		t.Fatal("editor closed after reset")
+	}
+	cfg, err := config.Load(m.cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := cfg.Presets["gemma-heretic-32k"]
+	if p.Options.Ctx != nil {
+		t.Fatal("preset ctx override was not removed")
+	}
+	if cfg.Models["gemma-4-heretic"].Options.Ctx == nil {
+		t.Fatal("model ctx override was removed too")
+	}
+	if got := m.editor.fields[ctx].source; got.Source != config.SourceModel || got.Layer != "models.gemma-4-heretic" {
+		t.Fatalf("ctx source after reset = %+v", got)
+	}
+}
+
+func TestEditorResetsNestedSampling(t *testing.T) {
+	m := testModel(t)
+	m.setTab(tabModels)
+	m.modelSel = indexOf(m.models, "gemma-4-heretic")
+	if m.modelSel < 0 {
+		t.Fatal("example model missing")
+	}
+	m.openEditor()
+	if m.editor == nil {
+		t.Fatal("editor did not open")
+	}
+	idx := editorFieldIndex(t, m, "sampling.top_k")
+	m.editor.sel = idx
+	if _, _ = m.updateEditor(tea.KeyMsg{Type: tea.KeyDelete}); m.editor == nil {
+		t.Fatal("editor closed after reset")
+	}
+	cfg, err := config.Load(m.cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sampling := cfg.Models["gemma-4-heretic"].Options.Sampling
+	if sampling != nil && sampling.TopK != nil {
+		t.Fatal("sampling.top_k override was not removed")
+	}
+	if got := m.editor.fields[idx].source; got.Source != config.SourceDefaults {
+		t.Fatalf("sampling.top_k source after reset = %+v", got)
+	}
+}
+
+func TestEditorResetIgnoresInheritedField(t *testing.T) {
+	m := testModel(t)
+	m.setTab(tabPresets)
+	m.openEditor()
+	idx := editorFieldIndex(t, m, "batch_size")
+	m.editor.sel = idx
+	before, err := os.ReadFile(m.cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _ = m.updateEditor(tea.KeyMsg{Type: tea.KeyBackspace}); !strings.Contains(m.toast, "nothing to reset") {
+		t.Fatalf("toast = %q", m.toast)
+	}
+	after, err := os.ReadFile(m.cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(before) != string(after) {
+		t.Fatal("inherited field changed the config")
+	}
+}
+
+func editorFieldIndex(t *testing.T, m *Model, label string) int {
+	t.Helper()
+	for i, f := range m.editor.fields {
+		if f.label == label {
+			return i
+		}
+	}
+	t.Fatalf("editor field %q missing", label)
+	return -1
 }
 
 func TestHeaderAndFooterLayout(t *testing.T) {

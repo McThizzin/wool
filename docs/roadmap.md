@@ -73,7 +73,7 @@ Shipped foundation:
 | Area | Today |
 | --- | --- |
 | Launch | Detached single-server and router modes, health wait, auto-port, PID/start-tick validation |
-| Config | TOML schema, layered inheritance, validation, comment-preserving scalar edits |
+| Config | TOML schema, layered inheritance, validation, provenance/explain, comment-preserving edits and override reset |
 | Fit | Dense and hybrid-attention VRAM estimate, GGUF metadata reader, AMD telemetry |
 | Observe | Dashboard, hardware sparklines, log tail, router `/metrics` and `/slots` |
 | Operate | Start/stop/restart, stale-state cleanup, log tailing |
@@ -86,7 +86,6 @@ Known gaps that shape the sequence:
 | The estimate is never checked against observed VRAM | Users cannot tell whether to trust it |
 | `n_cpu_moe` is not modeled | MoE models on 8 GB cards look unusable when they may fit |
 | No benchmark or history | Preset tuning is folklore |
-| The editor writes concrete values but cannot remove overrides | Inheritance is one-way and hard to undo |
 | No crash detection, restart policy or alerts | A server can die silently |
 | Models are configured by hand | Setup friction before the first launch |
 | One standalone server and one router | No named instances or fleets |
@@ -413,7 +412,7 @@ boundary.
 
 | ID | Item | Milestone | Priority | Size | Depends | Status |
 | --- | --- | --- | --- | --- | --- | --- |
-| M1.1 | [Override provenance and reset](features/m1-01-override-provenance-and-reset-to-inherited.md) | M1 | P0 | M | — | planned |
+| M1.1 | [Override provenance and reset](features/m1-01-override-provenance-and-reset-to-inherited.md) | M1 | P0 | M | — | shipped |
 | M1.2 | [Estimate breakdown and what-if](features/m1-02-estimate-breakdown-and-what-if-preview.md) | M1 | P0 | M | — | planned |
 | M1.3 | [Observed-vs-estimate capture](features/m1-03-observed-vs-estimate-capture.md) | M1 | P1 | S/M | — | planned |
 | M1.4 | [Effective-config diff](features/m1-04-effective-config-diff.md) | M1 | P2 | S | M1.1 | planned |

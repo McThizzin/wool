@@ -95,6 +95,103 @@ ctx = 4096
 	}
 }
 
+func TestRemoveValuePreservesFile(t *testing.T) {
+	path := writeTempConfig(t, `# top comment
+[models.a]
+path = "a.gguf"
+ctx = 4096 # tune later
+batch_size = 512
+
+# keep this comment
+[presets.p]
+model = "a"
+ctx = 2048
+
+[presets.p.sampling]
+temp = 0.5
+top_p = 0.9
+`)
+	if err := os.Chmod(path, 0o640); err != nil {
+		t.Fatal(err)
+	}
+	if err := RemoveValue(path, "models.a", "ctx"); err != nil {
+		t.Fatal(err)
+	}
+	if err := RemoveValue(path, "presets.p.sampling", "temp"); err != nil {
+		t.Fatal(err)
+	}
+	want := `# top comment
+[models.a]
+path = "a.gguf"
+batch_size = 512
+
+# keep this comment
+[presets.p]
+model = "a"
+ctx = 2048
+
+[presets.p.sampling]
+top_p = 0.9
+`
+	if got := readString(t, path); got != want {
+		t.Fatalf("file changed beyond removed keys:\n got %q\nwant %q", got, want)
+	}
+	info, _ := os.Stat(path)
+	if info.Mode().Perm() != 0o640 {
+		t.Fatalf("mode = %v", info.Mode().Perm())
+	}
+	if _, err := Load(path); err != nil {
+		t.Fatalf("config no longer loads: %v", err)
+	}
+}
+
+func TestRemoveValueLeavesEmptyTable(t *testing.T) {
+	path := writeTempConfig(t, `[models.a]
+path = "a.gguf"
+[models.a.sampling]
+temp = 0.5
+`)
+	if err := RemoveValue(path, "models.a.sampling", "temp"); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := readString(t, path), "[models.a]\npath = \"a.gguf\"\n[models.a.sampling]\n"; got != want {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+	if _, err := Load(path); err != nil {
+		t.Fatalf("config no longer loads: %v", err)
+	}
+}
+
+func TestRemoveValueMissingKeyIsNoOp(t *testing.T) {
+	src := `[models.a]
+path = "a.gguf"
+`
+	path := writeTempConfig(t, src)
+	for _, tc := range []struct{ table, key string }{
+		{"models.a", "ctx"},
+		{"models.missing", "ctx"},
+	} {
+		if err := RemoveValue(path, tc.table, tc.key); err != nil {
+			t.Fatalf("%+v: %v", tc, err)
+		}
+		if got := readString(t, path); got != src {
+			t.Fatalf("%+v changed the file: %q", tc, got)
+		}
+	}
+}
+
+func TestRemoveValueRejectsCollections(t *testing.T) {
+	path := writeTempConfig(t, `[models.a]
+path = "a.gguf"
+extra_args = [
+  "--one",
+]
+`)
+	if err := RemoveValue(path, "models.a", "extra_args"); err == nil {
+		t.Fatal("expected multi-line value to be rejected")
+	}
+}
+
 func TestSetValueRejectsBadNames(t *testing.T) {
 	path := writeTempConfig(t, "")
 	for _, tc := range []struct{ table, key, value string }{

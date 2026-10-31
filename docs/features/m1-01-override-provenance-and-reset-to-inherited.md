@@ -5,7 +5,7 @@ Part of [M1](../roadmap.md#milestone-m1). See the
 
 **Priority** P0 · **Size** M · **Depends** none
 
-**Status** planned
+**Status** shipped
 
 **Problem.** The editor marks a value as inherited or not, but it cannot say
 which layer supplied it, and there is no way to remove an override except
@@ -31,12 +31,12 @@ applying defaults, or move built-in defaults into a separate layer. Extend
 
 **Acceptance.**
 
-- [ ] Every editor field shows `built-in`, `defaults`, `model` or `preset`.
-- [ ] Reset removes only the selected key and the config still loads.
-- [ ] Reset works for nested `[*.sampling]` keys.
-- [ ] Comments and unrelated keys are byte-identical after reset.
-- [ ] `wool config explain --json` includes `value`, `source` and `layer`.
-- [ ] Tests cover removing the last key in a table and removing a key that is
+- [x] Every editor field shows `built-in`, `defaults`, `model` or `preset`.
+- [x] Reset removes only the selected key and the config still loads.
+- [x] Reset works for nested `[*.sampling]` keys.
+- [x] Comments and unrelated keys are byte-identical after reset.
+- [x] `wool config explain --json` includes `value`, `source` and `layer`.
+- [x] Tests cover removing the last key in a table and removing a key that is
       not present.
 
 **Risk.** A line-based remover can corrupt multi-line values. Restrict it to

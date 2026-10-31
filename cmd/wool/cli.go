@@ -40,6 +40,7 @@ Usage:
   wool router [start|stop|status|models|load ID|unload ID|reload|ini]
   wool config path                     print the config path
   wool config init [--force] [PATH]    write a sample config
+  wool config explain TARGET [--json]  show each value and where it came from
   wool version
 
 TARGET is a preset name or a model name. run options:
@@ -158,13 +159,15 @@ func cmdDoctor(cfgPath string) int {
 
 func cmdConfig(cfgPath string, args []string) int {
 	if len(args) == 0 {
-		fmt.Print("usage: wool config path|init [--force] [PATH]\n")
+		fmt.Print("usage: wool config path|init|explain\n")
 		return 2
 	}
 	switch args[0] {
 	case "path":
 		fmt.Println(cfgPath)
 		return 0
+	case "explain":
+		return cmdConfigExplain(cfgPath, args[1:])
 	case "init":
 		fs := flag.NewFlagSet("config init", flag.ContinueOnError)
 		fs.SetOutput(os.Stderr)
@@ -191,6 +194,142 @@ func cmdConfig(cfgPath string, args []string) int {
 		fmt.Fprintf(os.Stderr, "wool: unknown config command %q\n", args[0])
 		return 2
 	}
+}
+
+type explainField struct {
+	Field  string `json:"field"`
+	Value  any    `json:"value"`
+	Source string `json:"source"`
+	Layer  string `json:"layer"`
+}
+
+type explainOutput struct {
+	Target string         `json:"target"`
+	Kind   string         `json:"kind"`
+	Model  string         `json:"model"`
+	Fields []explainField `json:"fields"`
+}
+
+// cmdConfigExplain prints every resolved launch option with the layer that
+// supplied it. It is the CLI counterpart of the TUI editor's source column.
+func cmdConfigExplain(cfgPath string, args []string) int {
+	// Accept --json before or after TARGET; flag.Parse stops at the first
+	// positional argument.
+	asJSON := false
+	var positional []string
+	for _, arg := range args {
+		switch arg {
+		case "--json":
+			asJSON = true
+		default:
+			if strings.HasPrefix(arg, "-") {
+				fmt.Fprintf(os.Stderr, "wool: unknown option %q\n", arg)
+				return 2
+			}
+			positional = append(positional, arg)
+		}
+	}
+	if len(positional) != 1 {
+		fmt.Fprintln(os.Stderr, "usage: wool config explain TARGET [--json]")
+		return 2
+	}
+	target := positional[0]
+	cfg, err := loadConfig(cfgPath)
+	if err != nil {
+		printConfigError(cfgPath, err)
+		return 1
+	}
+
+	var r config.Resolved
+	var sources map[string]config.Provenance
+	kind := ""
+	if _, ok := cfg.Presets[target]; ok {
+		kind = "preset"
+		r, sources, err = cfg.ResolveDetailed("", target)
+	} else if _, ok := cfg.Models[target]; ok {
+		kind = "model"
+		r, sources, err = cfg.ResolveDetailed(target, "")
+	} else {
+		err = fmt.Errorf("no preset or model named %q", target)
+	}
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "wool: %v\n", err)
+		return 1
+	}
+
+	out := explainOutput{Target: target, Kind: kind, Model: r.ModelID}
+	for _, field := range config.OptionFields() {
+		p := sources[field]
+		out.Fields = append(out.Fields, explainField{
+			Field:  field,
+			Value:  resolvedFieldValue(r, field),
+			Source: p.Source,
+			Layer:  p.Layer,
+		})
+	}
+	if asJSON {
+		return writeJSON(out)
+	}
+	w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
+	fmt.Printf("%s (%s), model %s\n", out.Target, out.Kind, out.Model)
+	fmt.Fprintln(w, "FIELD\tVALUE\tSOURCE\tLAYER")
+	for _, f := range out.Fields {
+		fmt.Fprintf(w, "%s\t%v\t%s\t%s\n", f.Field, f.Value, f.Source, f.Layer)
+	}
+	w.Flush()
+	return 0
+}
+
+func resolvedFieldValue(r config.Resolved, field string) any {
+	switch field {
+	case "ctx":
+		return r.Ctx
+	case "gpu_layers":
+		return r.GPULayers
+	case "n_cpu_moe":
+		return r.NCPUMoE
+	case "threads":
+		return r.Threads
+	case "threads_batch":
+		return r.ThreadsBatch
+	case "batch_size":
+		return r.BatchSize
+	case "ubatch_size":
+		return r.UBatchSize
+	case "parallel":
+		return r.Parallel
+	case "flash_attn":
+		return r.FlashAttn
+	case "cache_type_k":
+		return r.CacheTypeK
+	case "cache_type_v":
+		return r.CacheTypeV
+	case "jinja":
+		return r.Jinja
+	case "metrics":
+		return r.Metrics
+	case "sampling.temp":
+		return r.Sampling.Temp
+	case "sampling.top_p":
+		return r.Sampling.TopP
+	case "sampling.top_k":
+		return r.Sampling.TopK
+	case "sampling.min_p":
+		return r.Sampling.MinP
+	case "sampling.repeat_penalty":
+		return r.Sampling.RepeatPenalty
+	case "sampling.presence_penalty":
+		return r.Sampling.PresencePenalty
+	case "sampling.frequency_penalty":
+		return r.Sampling.FrequencyPenalty
+	case "sampling.typical_p":
+		return r.Sampling.TypicalP
+	case "sampling.mirostat":
+		return r.Sampling.Mirostat
+	case "sampling.seed":
+		return r.Sampling.Seed
+	}
+	return nil
 }
 
 type listEntry struct {

@@ -9,7 +9,7 @@ Status values: `planned`, `in progress`, `shipped`, `blocked`, `dropped`.
 
 | Feature | Priority | Size | Depends | Status | Spec |
 | --- | --- | --- | --- | --- | --- |
-| M1.1 — Override provenance and reset-to-inherited | P0 | M | none | planned | [m1-01-override-provenance-and-reset-to-inherited.md](m1-01-override-provenance-and-reset-to-inherited.md) |
+| M1.1 — Override provenance and reset-to-inherited | P0 | M | none | shipped | [m1-01-override-provenance-and-reset-to-inherited.md](m1-01-override-provenance-and-reset-to-inherited.md) |
 | M1.2 — Estimate breakdown and what-if preview | P0 | M | none | planned | [m1-02-estimate-breakdown-and-what-if-preview.md](m1-02-estimate-breakdown-and-what-if-preview.md) |
 | M1.3 — Observed-vs-estimate capture | P1 | S/M | none | planned | [m1-03-observed-vs-estimate-capture.md](m1-03-observed-vs-estimate-capture.md) |
 | M1.4 — Effective-config diff | P2 | S | M1.1 | planned | [m1-04-effective-config-diff.md](m1-04-effective-config-diff.md) |

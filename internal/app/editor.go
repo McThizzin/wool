@@ -14,23 +14,24 @@ import (
 
 // editorField is one TOML key that can be changed from the TUI.
 type editorField struct {
-	label   string
-	table   string // full TOML table, e.g. presets.foo.sampling
-	key     string // TOML key inside the table
-	value   string // current value, TOML-formatted
-	kind    string // "int", "float", "string", "bool"
-	inherit bool   // true when the value comes from a lower layer
+	label  string
+	table  string // full TOML table, e.g. presets.foo.sampling
+	key    string // TOML key inside the table
+	value  string // current value, TOML-formatted
+	kind   string // "int", "float", "string", "bool"
+	source config.Provenance
 }
 
 // editor is a small overlay for editing preset or model options. Edits are
 // written to the TOML file so the config stays the single source of truth.
 type editor struct {
-	table  string
-	title  string
-	path   string
-	fields []editorField
-	sel    int
-	scroll int
+	table   string
+	title   string
+	path    string
+	fields  []editorField
+	sources map[string]config.Provenance
+	sel     int
+	scroll  int
 
 	input   textinput.Model
 	editing bool
@@ -48,12 +49,19 @@ func (m *Model) openEditor() {
 	if kind == "model" {
 		table = "models." + id
 	}
-	r, err := m.resolveTarget(id, kind)
+	var r config.Resolved
+	var sources map[string]config.Provenance
+	var err error
+	if kind == "preset" {
+		r, sources, err = m.cfg.ResolveDetailed("", id)
+	} else {
+		r, sources, err = m.cfg.ResolveDetailed(id, "")
+	}
 	if err != nil {
 		m.setToast("edit: " + err.Error())
 		return
 	}
-	e := &editor{table: table, title: "edit " + table, path: m.cfgPath}
+	e := &editor{table: table, title: "edit " + table, path: m.cfgPath, sources: sources}
 	samplingTable := table + ".sampling"
 	e.fields = []editorField{
 		{label: "ctx", table: table, key: "ctx", value: strconv.Itoa(r.Ctx), kind: "int"},
@@ -81,98 +89,13 @@ func (m *Model) openEditor() {
 		{label: "sampling.seed", table: samplingTable, key: "seed", value: strconv.Itoa(r.Sampling.Seed), kind: "int"},
 	}
 	for i := range e.fields {
-		e.fields[i].inherit = !fieldPresent(m.cfg, e.fields[i])
+		src, ok := sources[e.fields[i].label]
+		if !ok {
+			src = config.Provenance{Source: config.SourceBuiltin, Layer: "built-in"}
+		}
+		e.fields[i].source = src
 	}
 	m.editor = e
-}
-
-// fieldPresent reports whether the key exists in the TOML file's own table,
-// as opposed to being inherited from defaults.
-func fieldPresent(cfg *config.Config, f editorField) bool {
-	parts := strings.Split(f.table, ".")
-	if len(parts) == 0 {
-		return false
-	}
-	var opts config.Options
-	switch parts[0] {
-	case "presets":
-		if len(parts) < 2 {
-			return false
-		}
-		p, ok := cfg.Presets[parts[1]]
-		if !ok {
-			return false
-		}
-		opts = p.Options
-	case "models":
-		if len(parts) < 2 {
-			return false
-		}
-		mc, ok := cfg.Models[parts[1]]
-		if !ok {
-			return false
-		}
-		opts = mc.Options
-	default:
-		return false
-	}
-	if len(parts) == 3 && parts[2] == "sampling" {
-		if opts.Sampling == nil {
-			return false
-		}
-		switch f.key {
-		case "temp":
-			return opts.Sampling.Temp != nil
-		case "top_p":
-			return opts.Sampling.TopP != nil
-		case "top_k":
-			return opts.Sampling.TopK != nil
-		case "min_p":
-			return opts.Sampling.MinP != nil
-		case "repeat_penalty":
-			return opts.Sampling.RepeatPenalty != nil
-		case "presence_penalty":
-			return opts.Sampling.PresencePenalty != nil
-		case "frequency_penalty":
-			return opts.Sampling.FrequencyPenalty != nil
-		case "typical_p":
-			return opts.Sampling.TypicalP != nil
-		case "mirostat":
-			return opts.Sampling.Mirostat != nil
-		case "seed":
-			return opts.Sampling.Seed != nil
-		}
-		return false
-	}
-	switch f.key {
-	case "ctx":
-		return opts.Ctx != nil
-	case "gpu_layers":
-		return opts.GPULayers != nil
-	case "n_cpu_moe":
-		return opts.NCPUMoE != nil
-	case "threads":
-		return opts.Threads != nil
-	case "threads_batch":
-		return opts.ThreadsBatch != nil
-	case "batch_size":
-		return opts.BatchSize != nil
-	case "ubatch_size":
-		return opts.UBatchSize != nil
-	case "parallel":
-		return opts.Parallel != nil
-	case "flash_attn":
-		return opts.FlashAttn != nil
-	case "cache_type_k":
-		return opts.CacheTypeK != nil
-	case "cache_type_v":
-		return opts.CacheTypeV != nil
-	case "jinja":
-		return opts.Jinja != nil
-	case "metrics":
-		return opts.Metrics != nil
-	}
-	return false
 }
 
 func quoteTOML(s string) string {
@@ -207,18 +130,15 @@ func (m *Model) editorView() string {
 		if i == e.sel {
 			mark = "▸"
 		}
-		suffix := ""
-		if f.inherit {
-			suffix = st.Muted.Render("  inherited")
-		}
-		line := fmt.Sprintf("%s %-30s %s%s", mark, f.label, f.value, suffix)
+		suffix := st.Muted.Render("  " + f.source.Source)
+		line := fmt.Sprintf("%s %-26s %-8s %s", mark, f.label, f.value, suffix)
 		if i == e.sel {
 			body = append(body, st.Selected.Render(ui.Fit(line, w-4)))
 		} else {
 			body = append(body, ui.Fit(line, w-4))
 		}
 	}
-	panel := m.render.Panel(e.title, "enter edit · esc close", body, w, h, true)
+	panel := m.render.Panel(e.title, "enter edit · backspace reset · esc close", body, w, h, true)
 	lines := strings.Split(panel, "\n")
 	left := clamp((m.width-w)/2, 0, m.width)
 	var out []string
@@ -287,6 +207,30 @@ func (m *Model) updateEditor(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "G", "end":
 		e.sel = len(e.fields) - 1
 		e.ensureScroll()
+	case "backspace", "delete":
+		f := e.fields[e.sel]
+		if f.source.Layer != e.table {
+			m.setToast(f.label + " comes from " + f.source.Source + "; nothing to reset")
+			return m, nil
+		}
+		if err := config.RemoveValue(e.path, f.table, f.key); err != nil {
+			e.err = err.Error()
+			return m, nil
+		}
+		m.reloadConfig()
+		table, sel := e.table, e.sel
+		m.openEditor()
+		if m.editor == nil {
+			return m, nil
+		}
+		m.editor.table = table
+		m.editor.sel = clamp(sel, 0, len(m.editor.fields)-1)
+		next := config.SourceBuiltin
+		if src, ok := m.editor.sources[f.label]; ok {
+			next = src.Source
+		}
+		m.setToast("reset " + f.label + " to " + next)
+		return m, nil
 	case "enter", " ":
 		f := e.fields[e.sel]
 		if f.kind == "bool" {

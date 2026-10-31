@@ -83,6 +83,7 @@ wool logs [name] [-n N] [-f]         show a server log
 wool router [start|stop|status|models|load ID|unload ID|reload|ini]
 wool config path                     print the config path
 wool config init [--force] [PATH]    write a sample config
+wool config explain TARGET [--json]  show each value and where it came from
 wool version
 ```
 
@@ -139,6 +140,8 @@ built-in defaults -> [defaults] -> [models.<id>] -> [presets.<name>]
 
 Unset keys inherit; explicit zero/false values are preserved. `threads = 0` resolves to `runtime.NumCPU()`, and `threads_batch = 0` follows `threads`.
 
+`wool config explain TARGET` shows every effective launch option with the layer that supplied it (`built-in`, `defaults`, `model` or `preset`). Add `--json` for `value`, `source` and `layer` fields. In the editor, the same source is shown next to each row; `backspace` or `delete` removes that override and falls back to the next layer.
+
 ### Custom themes
 
 ```toml
@@ -168,7 +171,7 @@ Supported color keys: `border`, `accent`, `text`, `dim`, `badge_fg`, `red`, `yel
 | `m` | show stats for the selected router model |
 | `L` | focus logs |
 | `f` | toggle log follow |
-| `e` | edit the selected preset or model |
+| `e` | edit the selected preset or model; `backspace`/`delete` resets a row |
 | `d` | run doctor |
 | `t` | cycle theme |
 | `ctrl+r` | reload config.toml |
@@ -253,7 +256,7 @@ Tests cover config parsing/merging/editing, GGUF metadata and hybrid KV estimati
 
 - Only AMD sysfs telemetry is implemented; NVIDIA/Intel need new backends.
 - One standalone server and one router are managed per state directory.
-- The editor writes concrete values; there is no “remove override” action yet.
+- The editor can reset launch-option overrides, but not `model`, `path`, `alias` or `extra` keys.
 - Standalone servers are not automatically restarted; router-managed models are supervised by `llama-server` itself.
 - VRAM estimates remain conservative for MoE CPU offload and speculative decoding.
 

@@ -51,6 +51,71 @@ func TestLoadExample(t *testing.T) {
 	}
 }
 
+func TestResolveDetailedProvenance(t *testing.T) {
+	cfg, err := Parse([]byte(`
+[defaults]
+ctx = 8192
+cache_type_k = "f16"
+
+[models.a]
+path = "a.gguf"
+gpu_layers = 42
+
+[models.a.sampling]
+temp = 0.4
+
+[presets.p]
+model = "a"
+ctx = 16384
+
+[presets.p.sampling]
+top_p = 0.5
+`), "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, sources, err := cfg.ResolveDetailed("", "p")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Ctx != 16384 {
+		t.Fatalf("ctx = %d, want 16384", r.Ctx)
+	}
+	tests := []struct {
+		field, source, layer string
+	}{
+		{"ctx", SourcePreset, "presets.p"},
+		{"gpu_layers", SourceModel, "models.a"},
+		{"cache_type_k", SourceDefaults, "defaults"},
+		{"batch_size", SourceBuiltin, "built-in"},
+		{"sampling.temp", SourceModel, "models.a"},
+		{"sampling.top_p", SourcePreset, "presets.p"},
+		{"sampling.top_k", SourceBuiltin, "built-in"},
+	}
+	for _, tc := range tests {
+		got := sources[tc.field]
+		if got.Source != tc.source || got.Layer != tc.layer {
+			t.Errorf("%s = %+v, want source=%s layer=%s", tc.field, got, tc.source, tc.layer)
+		}
+	}
+	for _, field := range OptionFields() {
+		if _, ok := sources[field]; !ok {
+			t.Errorf("missing provenance for %s", field)
+		}
+	}
+
+	_, modelSources, err := cfg.ResolveDetailed("a", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := modelSources["ctx"]; got.Source != SourceDefaults || got.Layer != "defaults" {
+		t.Fatalf("model ctx source = %+v", got)
+	}
+	if got := modelSources["sampling.temp"]; got.Source != SourceModel || got.Layer != "models.a" {
+		t.Fatalf("model temp source = %+v", got)
+	}
+}
+
 func TestParseCustomThemes(t *testing.T) {
 	cfg, err := Parse([]byte(`
 [app]
