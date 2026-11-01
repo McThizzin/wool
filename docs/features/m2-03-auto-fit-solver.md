@@ -1,9 +1,9 @@
-# M2.2 — Auto-fit solver
+# M2.3 — Auto-fit solver
 
 Part of [M2](../roadmap.md#milestone-m2). See the
 [roadmap](../roadmap.md) for sequencing and the [feature index](README.md).
 
-**Priority** P1 · **Size** M/L · **Depends** M1.2, M2.1, M2.4
+**Priority** P1 · **Size** M/L · **Depends** M1.2, M2.1, M2.2
 
 **Status** planned
 

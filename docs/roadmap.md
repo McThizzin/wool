@@ -215,9 +215,9 @@ attention.
 | ID | Feature | Priority | Size |
 | --- | --- | --- | --- |
 | M2.1 | [MoE expert offload modeling](features/m2-01-moe-expert-offload-modeling.md) | P1 | L |
-| M2.2 | [Auto-fit solver](features/m2-02-auto-fit-solver.md) | P1 | M/L |
-| M2.3 | [Save a recommendation as a preset](features/m2-03-save-a-recommendation-as-a-preset.md) | P2 | S |
-| M2.4 | [Architecture-aware estimate](features/m2-04-architecture-aware-estimate.md) | P1 | L |
+| M2.2 | [Architecture-aware estimate](features/m2-02-architecture-aware-estimate.md) | P1 | L |
+| M2.3 | [Auto-fit solver](features/m2-03-auto-fit-solver.md) | P1 | M/L |
+| M2.4 | [Save a recommendation as a preset](features/m2-04-save-a-recommendation-as-a-preset.md) | P2 | S |
 
 **Exit criteria:** `wool fit` works for dense and MoE models, estimates account
 for non-block tensors and sliding-window KV, the editor can preview and apply a
@@ -420,9 +420,9 @@ boundary.
 | M1.3 | [Observed-vs-estimate capture](features/m1-03-observed-vs-estimate-capture.md) | M1 | P1 | S/M | — | planned |
 | M1.4 | [Effective-config diff](features/m1-04-effective-config-diff.md) | M1 | P2 | S | M1.1 | planned |
 | M2.1 | [MoE expert offload modeling](features/m2-01-moe-expert-offload-modeling.md) | M2 | P1 | L | — | planned |
-| M2.2 | [Auto-fit solver](features/m2-02-auto-fit-solver.md) | M2 | P1 | M/L | M1.2, M2.1, M2.4 | planned |
-| M2.3 | [Save recommendation as a preset](features/m2-03-save-a-recommendation-as-a-preset.md) | M2 | P2 | S | M2.2 | planned |
-| M2.4 | [Architecture-aware estimate](features/m2-04-architecture-aware-estimate.md) | M2 | P1 | L | M2.1 | planned |
+| M2.2 | [Architecture-aware estimate](features/m2-02-architecture-aware-estimate.md) | M2 | P1 | L | M2.1 | planned |
+| M2.3 | [Auto-fit solver](features/m2-03-auto-fit-solver.md) | M2 | P1 | M/L | M1.2, M2.1, M2.2 | planned |
+| M2.4 | [Save recommendation as a preset](features/m2-04-save-a-recommendation-as-a-preset.md) | M2 | P2 | S | M2.3 | planned |
 | M3.1 | [`wool bench`](features/m3-01-wool-bench.md) | M3 | P1 | L | M1.3 | planned |
 | M3.2 | [Benchmark history and trends](features/m3-02-benchmark-history-and-trends.md) | M3 | P1 | M | M3.1 | planned |
 | M3.3 | [A/B comparison](features/m3-03-a-b-comparison.md) | M3 | P2 | M | M3.1, M3.2 | planned |

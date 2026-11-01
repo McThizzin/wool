@@ -1,9 +1,9 @@
-# M2.3 — Save a recommendation as a preset
+# M2.4 — Save a recommendation as a preset
 
 Part of [M2](../roadmap.md#milestone-m2). See the
 [roadmap](../roadmap.md) for sequencing and the [feature index](README.md).
 
-**Priority** P2 · **Size** S · **Depends** M2.2
+**Priority** P2 · **Size** S · **Depends** M2.3
 
 **Status** planned
 

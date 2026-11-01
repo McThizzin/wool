@@ -1,4 +1,4 @@
-# M2.4 — Architecture-aware estimate
+# M2.2 — Architecture-aware estimate
 
 Part of [M2](../roadmap.md#milestone-m2). See the
 [roadmap](../roadmap.md) for sequencing and the [feature index](README.md).
