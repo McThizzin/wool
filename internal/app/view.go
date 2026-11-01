@@ -10,6 +10,7 @@ import (
 
 	"wool/internal/config"
 	"wool/internal/gguf"
+	"wool/internal/measure"
 	"wool/internal/ui"
 )
 
@@ -248,6 +249,9 @@ func (m *Model) fitLine(w int) []string {
 	est := fi.Est
 	budget := m.budget()
 	lines := []string{st.Muted.Render("fit " + fitBreakdown(est))}
+	if fi.HasObs {
+		lines = append(lines, st.Muted.Render(observationText(est.Total, fi.Observed)))
+	}
 	if !budget.Known {
 		return append(lines, st.Muted.Render("budget unknown (no GPU VRAM detected)"))
 	}
@@ -279,6 +283,15 @@ func fitBreakdown(e gguf.Estimate) string {
 	return fmt.Sprintf("weights %s + kv %s + overhead %s = %s",
 		ui.HumanBytes(e.WeightsBytes), ui.HumanBytes(e.KVBytes),
 		ui.HumanBytes(e.Overhead), ui.HumanBytes(e.Total))
+}
+
+// observationText compares the live estimate with the newest measurement.
+func observationText(estimate uint64, s measure.Summary) string {
+	if !s.BaselineKnown {
+		return fmt.Sprintf("observed unknown (n=%d)", s.Count)
+	}
+	return fmt.Sprintf("estimate %s · observed %s (n=%d)",
+		ui.HumanBytes(estimate), ui.HumanBytes(s.ObservedBytes), s.Count)
 }
 
 // fitBar draws the estimate as segments against the GPU's total VRAM.

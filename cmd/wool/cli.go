@@ -18,7 +18,10 @@ import (
 	"wool/internal/config"
 	"wool/internal/daemon"
 	"wool/internal/doctor"
+	"wool/internal/gguf"
 	"wool/internal/llamaserver"
+	"wool/internal/measure"
+	"wool/internal/sysinfo"
 )
 
 var (
@@ -460,6 +463,18 @@ func cmdRun(cfgPath string, args []string) int {
 		}
 	}
 
+	// Sample after any restart so the baseline does not include the process
+	// that is about to be replaced.
+	var gpu sysinfo.GPU
+	var baseline uint64
+	var baselineKnown bool
+	if snap, err := sysinfo.NewCollector().Sample(); err == nil {
+		if g, ok := snap.Primary(); ok {
+			gpu = g
+			baseline, baselineKnown = g.VRAMUsed, g.HasVRAM
+		}
+	}
+
 	state, err := mgr.Start(daemon.Spec{
 		Name:     "server",
 		Kind:     daemon.KindServer,
@@ -486,7 +501,54 @@ func cmdRun(cfgPath string, args []string) int {
 		}
 	}
 	printServer(state, preset)
+	if !*noWait {
+		fmt.Fprintln(os.Stderr, "wool: observing VRAM (5s, 15s)...")
+		rec := launchRecord(cfg, resolved, gpu, bin)
+		cap := measure.Capture{
+			Store:         measure.NewStore(),
+			Record:        rec,
+			Baseline:      baseline,
+			BaselineKnown: baselineKnown,
+			Sample:        measure.SampleVRAM,
+		}
+		if err := cap.Run(context.Background()); err != nil {
+			fmt.Fprintf(os.Stderr, "wool: observation: %v\n", err)
+		}
+	}
 	return 0
+}
+
+// launchRecord turns a resolved target into a measurement record. The estimate
+// is recomputed here so the record matches the launch exactly.
+func launchRecord(cfg *config.Config, r config.Resolved, gpu sysinfo.GPU, bin string) measure.Record {
+	var size uint64
+	var mod time.Time
+	if info, err := os.Stat(r.ModelPath); err == nil {
+		size = uint64(info.Size())
+		mod = info.ModTime()
+	}
+	meta, metaErr := gguf.ReadMeta(r.ModelPath)
+	reserve := uint64(0)
+	if cfg.Router.MemoryMarginMiB > 0 {
+		reserve = uint64(cfg.Router.MemoryMarginMiB) << 20
+	}
+	return measure.NewRecord(measure.RunInfo{
+		Instance:           "server",
+		ModelID:            r.ModelID,
+		ModelPath:          r.ModelPath,
+		FileSize:           size,
+		FileModTime:        mod,
+		Meta:               meta,
+		MetaOK:             metaErr == nil,
+		Ctx:                r.Ctx,
+		CacheTypeK:         r.CacheTypeK,
+		CacheTypeV:         r.CacheTypeV,
+		GPULayers:          r.GPULayers,
+		NCPUMoE:            r.NCPUMoE,
+		GPU:                gpu,
+		ReserveBytes:       reserve,
+		LlamaServerVersion: measure.ServerVersion(bin),
+	})
 }
 
 func resolveTarget(cfg *config.Config, name string) (config.Resolved, string, error) {

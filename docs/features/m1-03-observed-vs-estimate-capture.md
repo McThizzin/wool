@@ -5,7 +5,7 @@ Part of [M1](../roadmap.md#milestone-m1). See the
 
 **Priority** P1 · **Size** S/M · **Depends** none
 
-**Status** planned
+**Status** shipped
 
 **Problem.** The estimate is a prediction that is never checked. Users cannot
 tell whether it is conservative by 5% or 40%, and later calibration has no data
@@ -31,13 +31,21 @@ record `baseline_known: false` and do not present the delta as truth. Sample
 after mmap pages have been faulted; a reading immediately after health can be
 low.
 
+`internal/measure` owns the store and the capture sequence. `wool run` records
+one observation after the first `/health` success, sampling at 5s and 15s and
+using the last sample for the delta. The TUI launches the same capture as a
+background command, so the 15s window never blocks input; restarts re-sample the
+baseline after the old process stops. Records are matched by model, context,
+cache types, GPU layers and `n_cpu_moe`, so an observation from a different
+launch shape is not shown next to the current estimate.
+
 **Acceptance.**
 
-- [ ] A successful `wool run` writes exactly one measurement record.
-- [ ] The record survives restarts and is readable by the TUI and CLI.
-- [ ] A corrupt JSONL line is skipped, not fatal.
-- [ ] Doctor shows the most recent observation and the sample count.
-- [ ] Tests use a fake sysfs root and a temporary state directory.
+- [x] A successful `wool run` writes exactly one measurement record.
+- [x] The record survives restarts and is readable by the TUI and CLI.
+- [x] A corrupt JSONL line is skipped, not fatal.
+- [x] Doctor shows the most recent observation and the sample count.
+- [x] Tests use a fake sysfs root and a temporary state directory.
 
 **Risk.** Background GPU users and driver behavior make the observation noisy.
 Label it “observed delta”, never “actual usage”, and keep the raw samples.

@@ -40,16 +40,18 @@ func CacheDir() string {
 	return filepath.Join(home, ".cache", appDirName)
 }
 
-func ServersDir() string { return filepath.Join(StateDir(), "servers") }
-func LogsDir() string    { return filepath.Join(StateDir(), "logs") }
-func RouterDir() string  { return filepath.Join(StateDir(), "router") }
+func ServersDir() string       { return filepath.Join(StateDir(), "servers") }
+func LogsDir() string          { return filepath.Join(StateDir(), "logs") }
+func RouterDir() string        { return filepath.Join(StateDir(), "router") }
+func MeasurementsDir() string  { return filepath.Join(StateDir(), "measurements") }
+func MeasurementsPath() string { return filepath.Join(MeasurementsDir(), "runs.jsonl") }
 func RouterINIPath() string {
 	return filepath.Join(RouterDir(), "models.ini")
 }
 
 // EnsureStateDirs creates the state directories used by the daemon.
 func EnsureStateDirs() error {
-	for _, dir := range []string{StateDir(), ServersDir(), LogsDir(), RouterDir()} {
+	for _, dir := range []string{StateDir(), ServersDir(), LogsDir(), RouterDir(), MeasurementsDir()} {
 		if err := os.MkdirAll(dir, 0o700); err != nil {
 			return err
 		}

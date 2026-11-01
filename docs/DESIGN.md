@@ -61,6 +61,7 @@ supported. The router itself owns the lifecycle of the models it loads.
 | `internal/daemon` | detached process start/stop, state files, liveness checks, ports, log tailing |
 | `internal/llamaserver` | single-server argv, router argv, `models.ini` generation, HTTP client |
 | `internal/gguf` | GGUF metadata reader and VRAM estimate |
+| `internal/measure` | observed-VRAM JSONL store and post-launch capture |
 | `internal/sysinfo` | Linux `/proc` + AMD sysfs telemetry and graph history |
 | `internal/doctor` | readiness checks and report rendering |
 | `internal/ui` | ANSI-aware width fitting, panels, bars, sparklines |
@@ -545,6 +546,27 @@ not write the file until `Enter`. `Esc` restores the resolved value. Because
 `n_cpu_moe` is not modelled, the preview says the GPU estimate is unchanged
 rather than pretending to account for it.
 
+## Observed measurements
+
+`internal/measure` keeps one append-only JSONL record per successful launch at
+`$XDG_STATE_HOME/wool/measurements/runs.jsonl`. A record carries the model
+identity and file mtime, architecture, launch shape (`ctx`, cache types, GPU
+layers, `n_cpu_moe`), GPU PCI ID and driver, `llama-server --version`, the
+estimate, and the observed delta.
+
+The baseline is sampled immediately before the process starts. After `/health`
+first reports `ok`, the capture samples system-wide used VRAM at 5s and 15s,
+and subtracts the baseline from the last successful sample. Raw samples and the
+sample count are kept. If no baseline or no sample is available,
+the record says `baseline_known: false` and the UI does not present the delta as
+truth. Restarts re-sample the baseline after the old process stops.
+
+`wool run` performs the capture synchronously after health. The TUI runs the
+same capture as a background command so the 15s window never blocks input.
+Records are matched by model, context, cache types, GPU layers and
+`n_cpu_moe`; observations from a different launch shape are not compared.
+A corrupt line is skipped. There is no correction factor yet; that is M3.4.
+
 ## Doctor
 
 `wool doctor` checks:
@@ -555,7 +577,8 @@ rather than pretending to account for it.
 - model directories and GGUF files;
 - duplicate model paths (the router would expose the same weights twice);
 - per-model and per-preset fit estimates, including the weights/KV/overhead
-  breakdown, budget, headroom and limiting term.
+  breakdown, budget, headroom and limiting term;
+- the newest matching observation and its sample count, when one exists.
 
 Warnings do not make the command fail; failures do. `wool doctor --json`
 exposes the same report. The TUI shows the plain-text report in a scrollable
@@ -579,7 +602,9 @@ wool version
 ```
 
 `run` options: `--dry-run`, `--restart`, `--port N`, `--no-wait`.
-`router start` accepts the same options.
+`router start` accepts the same options. Unless `--no-wait` or `--dry-run` is
+used, `wool run` records one observation after health, so the command stays
+alive through the 5s/15s settle window.
 
 ## Testing
 

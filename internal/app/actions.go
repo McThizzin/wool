@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"errors"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -13,6 +14,7 @@ import (
 	"wool/internal/daemon"
 	"wool/internal/doctor"
 	"wool/internal/llamaserver"
+	"wool/internal/measure"
 	"wool/internal/theme"
 )
 
@@ -43,7 +45,13 @@ func (m *Model) startTarget(id, kind string) tea.Cmd {
 	if host == "" {
 		host = "127.0.0.1"
 	}
+	job := m.newMeasureJob(r, "server", config.ExpandPath(cfg.App.LlamaServer))
 	return func() tea.Msg {
+		var baseline uint64
+		var baselineKnown bool
+		if job != nil {
+			baseline, baselineKnown = measure.SampleVRAM()
+		}
 		state, err := mgr.Start(daemon.Spec{
 			Name:     "server",
 			Kind:     daemon.KindServer,
@@ -57,7 +65,77 @@ func (m *Model) startTarget(id, kind string) tea.Cmd {
 				return llamaserver.SingleArgs(r, host, port)
 			},
 		})
-		return actionMsg{label: "started " + label + " on port " + strconv.Itoa(state.Port), err: err, state: state, hasSt: err == nil}
+		if err == nil && job != nil {
+			job.baseline, job.baselineKnown = baseline, baselineKnown
+			job.host, job.port = state.Host, state.Port
+		}
+		return actionMsg{label: "started " + label + " on port " + strconv.Itoa(state.Port), err: err, state: state, hasSt: err == nil, measure: job}
+	}
+}
+
+// newMeasureJob snapshots the config and estimate before a launch. The
+// baseline is filled in by the launch goroutine, after any old process stops.
+func (m *Model) newMeasureJob(r config.Resolved, instance, bin string) *measureJob {
+	if m.meas == nil {
+		return nil
+	}
+	info, err := os.Stat(r.ModelPath)
+	if err != nil {
+		return nil
+	}
+	meta, metaErr := m.metaFor(r.ModelPath)
+	gpu, _ := m.snap.Primary()
+	reserve := uint64(maxInt(0, m.cfg.Router.MemoryMarginMiB)) << 20
+	rec := measure.NewRecord(measure.RunInfo{
+		Instance:     instance,
+		ModelID:      r.ModelID,
+		ModelPath:    r.ModelPath,
+		FileSize:     uint64(info.Size()),
+		FileModTime:  info.ModTime(),
+		Meta:         meta.Meta,
+		MetaOK:       metaErr == nil,
+		Ctx:          r.Ctx,
+		CacheTypeK:   r.CacheTypeK,
+		CacheTypeV:   r.CacheTypeV,
+		GPULayers:    r.GPULayers,
+		NCPUMoE:      r.NCPUMoE,
+		GPU:          gpu,
+		ReserveBytes: reserve,
+	})
+	timeout := 120 * time.Second
+	if d, err := time.ParseDuration(m.cfg.Server.StartupTimeout); err == nil && d > 0 {
+		timeout = d
+	}
+	return &measureJob{
+		store:    m.meas,
+		rec:      rec,
+		bin:      bin,
+		timeout:  timeout,
+		interval: m.pollInterval(),
+	}
+}
+
+// captureMeasurement waits for /health, samples the settle window, and writes
+// one record. It runs as its own tea.Cmd so the UI never blocks on it.
+func (m *Model) captureMeasurement(job *measureJob) tea.Cmd {
+	return func() tea.Msg {
+		client := llamaserver.NewClient(job.host, job.port)
+		ctx, cancel := context.WithTimeout(context.Background(), job.timeout)
+		err := client.WaitReady(ctx, job.timeout, job.interval)
+		cancel()
+		if err != nil {
+			return measuredMsg{err: err}
+		}
+		rec := job.rec
+		rec.LlamaServerVersion = measure.ServerVersion(job.bin)
+		cap := measure.Capture{
+			Store:         job.store,
+			Record:        rec,
+			Baseline:      job.baseline,
+			BaselineKnown: job.baselineKnown,
+			Sample:        measure.SampleVRAM,
+		}
+		return measuredMsg{err: cap.Run(context.Background())}
 	}
 }
 
@@ -94,9 +172,15 @@ func (m *Model) restartServer() tea.Cmd {
 		preset = id
 	}
 	label := id
+	job := m.newMeasureJob(r, "server", config.ExpandPath(cfg.App.LlamaServer))
 	m.busy = "restarting " + id + "..."
 	return func() tea.Msg {
 		_ = mgr.Stop("server", 20*time.Second)
+		var baseline uint64
+		var baselineKnown bool
+		if job != nil {
+			baseline, baselineKnown = measure.SampleVRAM()
+		}
 		state, err := mgr.Start(daemon.Spec{
 			Name:     "server",
 			Kind:     daemon.KindServer,
@@ -110,7 +194,11 @@ func (m *Model) restartServer() tea.Cmd {
 				return llamaserver.SingleArgs(r, host, port)
 			},
 		})
-		return actionMsg{label: "restarted " + label, err: err, state: state, hasSt: err == nil}
+		if err == nil && job != nil {
+			job.baseline, job.baselineKnown = baseline, baselineKnown
+			job.host, job.port = state.Host, state.Port
+		}
+		return actionMsg{label: "restarted " + label, err: err, state: state, hasSt: err == nil, measure: job}
 	}
 }
 

@@ -23,6 +23,7 @@
 - **One TOML source of truth.** Models, presets, launch options, sampling, router settings, and themes all live in `config.toml`. There is no legacy `presets.conf` importer.
 - **Full router control.** Start/stop the router, list models, load/unload, reload presets, and read per-model stats and slots.
 - **VRAM-fit estimates.** Reads GGUF metadata, supports hybrid attention (Qwen3.5/Qwen3-Next), per-layer KV heads, and quantized KV cache types. The UI shows `weights + KV + overhead`, the budget after reserve and other GPU usage, headroom and the limiting term.
+- **Observed vs. estimate.** After a launch, `wool` records used VRAM at 5s and 15s and shows it next to the estimate with a sample count.
 - **Hardware telemetry.** CPU, RAM, AMD `amdgpu` VRAM, temperature, power, fan, and sparklines, with no extra daemon required.
 - **Preset and model editing.** Edit resolved launch options in the TUI; changes are written back to TOML with comments and ordering preserved. Changing `ctx`, cache type, `gpu_layers` or `n_cpu_moe` previews the new estimate without saving.
 - **Six tabs, themes, commands.** Dashboard, Models, Presets, Router, Hardware, Logs; built-in and custom themes; slash commands and completion.
@@ -144,6 +145,8 @@ Unset keys inherit; explicit zero/false values are preserved. `threads = 0` reso
 
 The dashboard and `wool doctor` decompose the estimate into weights, KV cache and overhead, then compare it with the budget for a new server: GPU total minus `router.memory_margin_mib` minus VRAM used by other processes. A running standalone server's own allocation is excluded so a restart is not charged twice. `wool doctor --json` includes the same `estimate`, `budget`, `headroom_bytes` and `limiting_term` fields. While editing, the preview updates as you type; `enter` commits and `esc` discards.
 
+Successful launches also record one observation in `$XDG_STATE_HOME/wool/measurements/runs.jsonl`: a pre-launch VRAM baseline, samples at 5s and 15s after health, and the estimate for that exact launch. The dashboard and doctor show `estimate 6.1 GiB · observed 6.4 GiB (n=3)`. The observation is a baseline-subtracted delta, not an exact model footprint, and it is recorded even when the baseline is unknown (shown as `observed unknown`). No correction factor is applied.
+
 ### Custom themes
 
 ```toml
@@ -232,6 +235,7 @@ internal/config/   TOML schema, merging, path handling, config edits
 internal/daemon/   detached process lifecycle, state, ports, logs
 internal/llamaserver/ argv/INI generation and HTTP API client
 internal/gguf/     GGUF metadata reader and VRAM estimate
+internal/measure/  observed VRAM JSONL store and launch capture
 internal/sysinfo/  /proc and AMD sysfs telemetry
 internal/doctor/   readiness checks
 internal/theme/    palettes, styles, icons, custom themes
@@ -252,7 +256,7 @@ go vet ./...
 go test -count=1 ./...
 ```
 
-Tests cover config parsing/merging/editing, GGUF metadata and hybrid KV estimation, argv and INI generation, router metrics, daemon lifecycle and PID validation, sysinfo parsing, themes, and TUI rendering at multiple terminal sizes.
+Tests cover config parsing/merging/editing, GGUF metadata and hybrid KV estimation, measurement storage and capture, argv and INI generation, router metrics, daemon lifecycle and PID validation, sysinfo parsing, themes, and TUI rendering at multiple terminal sizes.
 
 ## Limitations
 
@@ -261,5 +265,6 @@ Tests cover config parsing/merging/editing, GGUF metadata and hybrid KV estimati
 - The editor can reset launch-option overrides, but not `model`, `path`, `alias` or `extra` keys.
 - Standalone servers are not automatically restarted; router-managed models are supervised by `llama-server` itself.
 - VRAM estimates remain conservative for MoE CPU offload and speculative decoding.
+- Observations are system-wide VRAM deltas; background GPU work makes them noisy. They are never presented as exact usage.
 
 See [`docs/DESIGN.md`](docs/DESIGN.md) for the full design, lifecycle, and config reference, and [`docs/roadmap.md`](docs/roadmap.md) for what is planned and in what order.

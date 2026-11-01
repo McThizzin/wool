@@ -6,6 +6,7 @@ import (
 
 	"wool/internal/config"
 	"wool/internal/gguf"
+	"wool/internal/measure"
 )
 
 func TestEstimateLine(t *testing.T) {
@@ -45,6 +46,13 @@ func TestFitNoteUsesBudget(t *testing.T) {
 	}
 }
 
+func TestObservationLineUnknownBaseline(t *testing.T) {
+	got := observationLine(1<<30, measure.Summary{Count: 2})
+	if got != "estimate 1.0 GiB · observed unknown (n=2)" {
+		t.Fatalf("observation line = %q", got)
+	}
+}
+
 func TestReportPrintShowsBreakdownAndBudget(t *testing.T) {
 	const mib = 1 << 20
 	budget := gguf.ComputeBudget(8<<30, 2<<30, 512<<20, 0, false)
@@ -57,10 +65,12 @@ func TestReportPrintShowsBreakdownAndBudget(t *testing.T) {
 			ID: "m", Path: "/tmp/m.gguf", Exists: true, Size: 8 << 30,
 			Ctx: 4096, HasEst: true, Est: est,
 			Headroom: budget.Headroom(est), Limiting: est.LimitingTerm(),
+			Observed: &measure.Summary{ObservedBytes: 3 << 30, BaselineKnown: true, Count: 1},
 			Presets: []PresetFit{{
 				ID: "p", Ctx: 65536, Known: true,
 				Estimate: gguf.Estimate{WeightsBytes: 4096 * mib, KVBytes: 6144 * mib, Overhead: 512 * mib, Total: 10752 * mib},
 				Fits:     false, Note: "MoE CPU offload not included",
+				Observed: &measure.Summary{ObservedBytes: 9 << 30, BaselineKnown: true, Count: 2},
 			}},
 		}},
 	}
@@ -74,6 +84,8 @@ func TestReportPrintShowsBreakdownAndBudget(t *testing.T) {
 		"headroom",
 		"over",
 		"MoE CPU offload not included",
+		"estimate 5.5 GiB · observed 3.0 GiB (n=1)",
+		"observed 9.0 GiB (n=2)",
 	} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("report missing %q:\n%s", want, out)

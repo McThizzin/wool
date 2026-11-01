@@ -14,6 +14,7 @@ import (
 	"wool/internal/config"
 	"wool/internal/daemon"
 	"wool/internal/gguf"
+	"wool/internal/measure"
 	"wool/internal/sysinfo"
 )
 
@@ -46,33 +47,35 @@ type Check struct {
 
 // PresetFit is a memory estimate for one preset.
 type PresetFit struct {
-	ID       string        `json:"id"`
-	Ctx      int           `json:"ctx"`
-	Estimate gguf.Estimate `json:"estimate"`
-	Known    bool          `json:"known"`
-	Fits     bool          `json:"fits"`
-	Headroom int64         `json:"headroom_bytes"`
-	Limiting string        `json:"limiting_term,omitempty"`
-	Note     string        `json:"note,omitempty"`
+	ID       string           `json:"id"`
+	Ctx      int              `json:"ctx"`
+	Estimate gguf.Estimate    `json:"estimate"`
+	Known    bool             `json:"known"`
+	Fits     bool             `json:"fits"`
+	Headroom int64            `json:"headroom_bytes"`
+	Limiting string           `json:"limiting_term,omitempty"`
+	Note     string           `json:"note,omitempty"`
+	Observed *measure.Summary `json:"observation,omitempty"`
 }
 
 // ModelReport describes one configured model.
 type ModelReport struct {
-	ID       string        `json:"id"`
-	Path     string        `json:"path"`
-	Alias    string        `json:"alias,omitempty"`
-	Ctx      int           `json:"ctx"`
-	Exists   bool          `json:"exists"`
-	Size     uint64        `json:"size_bytes"`
-	Meta     gguf.Meta     `json:"meta"`
-	HasMeta  bool          `json:"has_meta"`
-	MetaErr  string        `json:"meta_error,omitempty"`
-	Est      gguf.Estimate `json:"estimate"`
-	HasEst   bool          `json:"has_estimate"`
-	Headroom int64         `json:"headroom_bytes"`
-	Limiting string        `json:"limiting_term,omitempty"`
-	FitNote  string        `json:"fit_note,omitempty"`
-	Presets  []PresetFit   `json:"presets,omitempty"`
+	ID       string           `json:"id"`
+	Path     string           `json:"path"`
+	Alias    string           `json:"alias,omitempty"`
+	Ctx      int              `json:"ctx"`
+	Exists   bool             `json:"exists"`
+	Size     uint64           `json:"size_bytes"`
+	Meta     gguf.Meta        `json:"meta"`
+	HasMeta  bool             `json:"has_meta"`
+	MetaErr  string           `json:"meta_error,omitempty"`
+	Est      gguf.Estimate    `json:"estimate"`
+	HasEst   bool             `json:"has_estimate"`
+	Headroom int64            `json:"headroom_bytes"`
+	Limiting string           `json:"limiting_term,omitempty"`
+	FitNote  string           `json:"fit_note,omitempty"`
+	Observed *measure.Summary `json:"observation,omitempty"`
+	Presets  []PresetFit      `json:"presets,omitempty"`
 }
 
 // Report is the full doctor result.
@@ -111,6 +114,7 @@ func (r Report) Warnings() []Check {
 // Run checks the local installation. cfg must already be loaded.
 func Run(cfg *config.Config, cfgPath string) Report {
 	rep := Report{ConfigPath: cfgPath}
+	store := measure.NewStore()
 	add := func(level Level, name, format string, args ...any) {
 		rep.Checks = append(rep.Checks, Check{Level: level, Name: name, Detail: fmt.Sprintf(format, args...)})
 	}
@@ -220,6 +224,17 @@ func Run(cfg *config.Config, cfgPath string) Report {
 				if r.FitNote != "" {
 					add(LevelWarn, "fit "+id, "%s", r.FitNote)
 				}
+				shape := measure.Shape{
+					ModelID:    id,
+					Ctx:        resolved.Ctx,
+					CacheTypeK: resolved.CacheTypeK,
+					CacheTypeV: resolved.CacheTypeV,
+					GPULayers:  resolved.GPULayers,
+					NCPUMoE:    resolved.NCPUMoE,
+				}
+				if sum, ok := store.Summary(shape); ok {
+					r.Observed = &sum
+				}
 			}
 		}
 
@@ -233,6 +248,17 @@ func Run(cfg *config.Config, cfgPath string) Report {
 				continue
 			}
 			pf := PresetFit{ID: pid, Ctx: pr.Ctx}
+			shape := measure.Shape{
+				ModelID:    id,
+				Ctx:        pr.Ctx,
+				CacheTypeK: pr.CacheTypeK,
+				CacheTypeV: pr.CacheTypeV,
+				GPULayers:  pr.GPULayers,
+				NCPUMoE:    pr.NCPUMoE,
+			}
+			if sum, ok := store.Summary(shape); ok {
+				pf.Observed = &sum
+			}
 			if r.HasMeta {
 				pf.Known = true
 				pf.Estimate = gguf.EstimateVRAM(r.Meta, r.Size, pr.Ctx, pr.GPULayers, pr.CacheTypeK, pr.CacheTypeV)
@@ -371,6 +397,20 @@ func estimateLine(e gguf.Estimate, headroom int64, limiting string, budgetKnown 
 	return line
 }
 
+// observationLine compares the live estimate with the newest measurement.
+func observationLine(estimate uint64, s measure.Summary) string {
+	return fmt.Sprintf("estimate %s · %s", humanBytes(estimate), observedShort(s))
+}
+
+// observedShort is the observation without repeating the estimate, for lines
+// that already show one.
+func observedShort(s measure.Summary) string {
+	if !s.BaselineKnown {
+		return fmt.Sprintf("observed unknown (n=%d)", s.Count)
+	}
+	return fmt.Sprintf("observed %s (n=%d)", humanBytes(s.ObservedBytes), s.Count)
+}
+
 // Print writes a plain-text report. Kept here so the CLI and TUI show the
 // same wording.
 func (r Report) Print() string {
@@ -398,8 +438,11 @@ func (r Report) Print() string {
 				state = humanBytes(m.Size)
 			}
 			fmt.Fprintf(&b, "  %-22s %-10s ctx %-6d", m.ID, state, m.Ctx)
-			if m.HasEst {
+			if m.HasEst && m.Observed == nil {
 				fmt.Fprintf(&b, " est %s", humanBytes(m.Est.Total))
+			}
+			if m.Observed != nil {
+				fmt.Fprintf(&b, "  %s", observationLine(m.Est.Total, *m.Observed))
 			}
 			if m.MetaErr != "" {
 				b.WriteString(" (metadata unreadable)")
@@ -419,6 +462,9 @@ func (r Report) Print() string {
 				fmt.Fprintf(&b, "    %-24s ctx %-6d est %-9s %s", p.ID, p.Ctx, est, mark)
 				if p.Known {
 					b.WriteString(" · " + estimateLine(p.Estimate, p.Headroom, p.Limiting, r.Budget.Known))
+				}
+				if p.Observed != nil {
+					b.WriteString(" · " + observedShort(*p.Observed))
 				}
 				if p.Note != "" {
 					b.WriteString(" (" + p.Note + ")")

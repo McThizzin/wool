@@ -13,6 +13,7 @@ import (
 	"wool/internal/config"
 	"wool/internal/daemon"
 	"wool/internal/gguf"
+	"wool/internal/measure"
 	"wool/internal/sysinfo"
 )
 
@@ -33,6 +34,7 @@ func testModel(t *testing.T) *Model {
 	}
 	mgr := daemon.NewManagerWithDirs(filepath.Join(dir, "state"), filepath.Join(dir, "logs"))
 	m := newModel(cfg, path, mgr)
+	m.meas = measure.NewStoreAt(filepath.Join(dir, "measurements", "runs.jsonl"))
 	m.snap = sysinfo.Snapshot{
 		CPUs: 8, CPUPercent: 12.5, MemTotal: 16 << 30, MemAvailable: 8 << 30,
 		GPUs: []sysinfo.GPU{{
@@ -61,6 +63,25 @@ func checkView(t *testing.T, m *Model, w, h int) {
 	}
 	if strings.TrimSpace(out) == "" {
 		t.Fatalf("%dx%d: empty view", w, h)
+	}
+}
+
+func TestFitLineShowsObservation(t *testing.T) {
+	m := testModel(t)
+	m.fit = fitInfo{
+		Ready:    true,
+		Est:      gguf.Estimate{Total: 8 << 30},
+		HasObs:   true,
+		Observed: measure.Summary{ObservedBytes: 3 << 30, BaselineKnown: true, Count: 1},
+	}
+	out := strings.Join(m.fitLine(80), "\n")
+	if !strings.Contains(out, "estimate 8.0 GiB · observed 3.0 GiB (n=1)") {
+		t.Fatalf("fit line missing observation:\n%s", out)
+	}
+	m.fit.Observed = measure.Summary{BaselineKnown: false, Count: 2}
+	out = strings.Join(m.fitLine(80), "\n")
+	if !strings.Contains(out, "observed unknown (n=2)") {
+		t.Fatalf("fit line missing unknown observation:\n%s", out)
 	}
 }
 

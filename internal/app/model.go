@@ -17,6 +17,7 @@ import (
 	"wool/internal/daemon"
 	"wool/internal/gguf"
 	"wool/internal/llamaserver"
+	"wool/internal/measure"
 	"wool/internal/sysinfo"
 	"wool/internal/theme"
 	"wool/internal/ui"
@@ -51,6 +52,7 @@ type Model struct {
 	mgr     *daemon.Manager
 	sys     *sysinfo.Collector
 	hist    *sysinfo.History
+	meas    *measure.Store
 	render  ui.Renderer
 
 	width, height int
@@ -122,6 +124,8 @@ type fitInfo struct {
 	GPUName   string
 	Ctx       int
 	Layers    int
+	Observed  measure.Summary
+	HasObs    bool
 }
 
 type metaEntry struct {
@@ -148,11 +152,30 @@ type tickMsg struct {
 }
 
 type actionMsg struct {
-	label  string
-	err    error
-	state  daemon.State
-	hasSt  bool
-	router bool
+	label   string
+	err     error
+	state   daemon.State
+	hasSt   bool
+	router  bool
+	measure *measureJob
+}
+
+// measureJob carries the pre-launch state needed to record one observation
+// after the server becomes healthy.
+type measureJob struct {
+	store         *measure.Store
+	rec           measure.Record
+	baseline      uint64
+	baselineKnown bool
+	host          string
+	port          int
+	bin           string
+	timeout       time.Duration
+	interval      time.Duration
+}
+
+type measuredMsg struct {
+	err error
 }
 
 type doctorMsg struct {
@@ -191,6 +214,7 @@ func newModel(cfg *config.Config, cfgPath string, mgr *daemon.Manager) *Model {
 		mgr:       mgr,
 		sys:       sysinfo.NewCollector(),
 		hist:      sysinfo.NewHistory(120),
+		meas:      measure.NewStore(),
 		render:    ui.New(th, cfg.App.NerdFonts),
 		themeName: th.Name,
 		fitCache:  map[string]fitInfo{},
@@ -270,7 +294,20 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.logSel, m.logName = 1, "router"
 			}
 		}
-		return m, m.refreshLater(150 * time.Millisecond)
+		cmd := m.refreshLater(150 * time.Millisecond)
+		if msg.measure != nil && msg.err == nil {
+			cmd = tea.Batch(cmd, m.captureMeasurement(msg.measure))
+		}
+		return m, cmd
+	case measuredMsg:
+		if msg.err != nil {
+			m.setToast("measurement: " + oneLine(msg.err.Error(), 120))
+		} else {
+			m.fitCache = map[string]fitInfo{}
+			m.fitKey = ""
+			m.ensureFit()
+		}
+		return m, nil
 	case doctorMsg:
 		m.busy = ""
 		if msg.err != nil {
@@ -563,6 +600,19 @@ func (m *Model) computeFit(r config.Resolved) fitInfo {
 	}
 	fi.Est = gguf.EstimateVRAM(meta.Meta, meta.Size, r.Ctx, r.GPULayers, r.CacheTypeK, r.CacheTypeV)
 	fi.Ready = true
+	if m.meas != nil {
+		shape := measure.Shape{
+			ModelID:    r.ModelID,
+			Ctx:        r.Ctx,
+			CacheTypeK: r.CacheTypeK,
+			CacheTypeV: r.CacheTypeV,
+			GPULayers:  r.GPULayers,
+			NCPUMoE:    r.NCPUMoE,
+		}
+		if sum, ok := m.meas.Summary(shape); ok {
+			fi.Observed, fi.HasObs = sum, true
+		}
+	}
 	return fi
 }
 

@@ -417,7 +417,7 @@ boundary.
 | --- | --- | --- | --- | --- | --- | --- |
 | M1.1 | [Override provenance and reset](features/m1-01-override-provenance-and-reset-to-inherited.md) | M1 | P0 | M | — | shipped |
 | M1.2 | [Estimate breakdown and what-if](features/m1-02-estimate-breakdown-and-what-if-preview.md) | M1 | P0 | M | — | shipped |
-| M1.3 | [Observed-vs-estimate capture](features/m1-03-observed-vs-estimate-capture.md) | M1 | P1 | S/M | — | planned |
+| M1.3 | [Observed-vs-estimate capture](features/m1-03-observed-vs-estimate-capture.md) | M1 | P1 | S/M | — | shipped |
 | M1.4 | [Effective-config diff](features/m1-04-effective-config-diff.md) | M1 | P2 | S | M1.1 | planned |
 | M2.1 | [MoE expert offload modeling](features/m2-01-moe-expert-offload-modeling.md) | M2 | P1 | L | — | planned |
 | M2.2 | [Architecture-aware estimate](features/m2-02-architecture-aware-estimate.md) | M2 | P1 | L | M2.1 | planned |
