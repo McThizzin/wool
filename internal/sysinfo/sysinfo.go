@@ -46,6 +46,47 @@ func (g GPU) VRAMPercent() float64 {
 	return float64(g.VRAMUsed) / float64(g.VRAMTotal) * 100
 }
 
+// ProcessVRAM returns the VRAM a process holds according to DRM fdinfo. It is
+// best-effort: drivers that do not report drm-memory-vram return false.
+func ProcessVRAM(pid int) (uint64, bool) {
+	return processVRAM("/proc", pid)
+}
+
+func processVRAM(root string, pid int) (uint64, bool) {
+	if pid <= 0 {
+		return 0, false
+	}
+	dir := filepath.Join(root, strconv.Itoa(pid), "fdinfo")
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return 0, false
+	}
+	var total uint64
+	found := false
+	for _, e := range entries {
+		data, err := os.ReadFile(filepath.Join(dir, e.Name()))
+		if err != nil {
+			continue
+		}
+		for _, line := range strings.Split(string(data), "\n") {
+			if !strings.HasPrefix(line, "drm-memory-vram:") {
+				continue
+			}
+			fields := strings.Fields(strings.TrimPrefix(line, "drm-memory-vram:"))
+			if len(fields) == 0 {
+				continue
+			}
+			kib, err := strconv.ParseUint(fields[0], 10, 64)
+			if err != nil {
+				continue
+			}
+			total += kib * 1024
+			found = true
+		}
+	}
+	return total, found
+}
+
 // Snapshot is one sample of machine state.
 type Snapshot struct {
 	At           time.Time

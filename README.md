@@ -11,7 +11,7 @@
 │ qwen-cyber-32k  preset                                             │ │ SERVER            │
 │ /home/user/models/Qwen3-4B-cybersecurity-heretic.gguf              │ │ running           │
 │ model qwen3-4b-cyber   ctx 32768   gpu layers 999                  │ │ ...               │
-│ VRAM 4.1 GiB / 8.0 GiB  ████████████████░░░░  51% fits             │ │ ROUTER            │
+│ budget 4.1 GiB / 5.5 GiB  ██████████████░░░░  76% fits             │ │ ROUTER            │
 ╰────────────────────────────────────────────────────────────────────╯ ╰───────────────────╯
  press / to type a command                                              mocha
  tab switch · j/k move · enter start · x stop · r router · d doctor     120x40
@@ -22,9 +22,9 @@
 - **Detached servers by default.** `run`, `start`, and router launches use `setsid`; quitting the TUI never stops inference. State is stored as JSON and processes are validated by PID start tick before they are signalled.
 - **One TOML source of truth.** Models, presets, launch options, sampling, router settings, and themes all live in `config.toml`. There is no legacy `presets.conf` importer.
 - **Full router control.** Start/stop the router, list models, load/unload, reload presets, and read per-model stats and slots.
-- **VRAM-fit estimates.** Reads GGUF metadata, supports hybrid attention (Qwen3.5/Qwen3-Next), per-layer KV heads, and quantized KV cache types.
+- **VRAM-fit estimates.** Reads GGUF metadata, supports hybrid attention (Qwen3.5/Qwen3-Next), per-layer KV heads, and quantized KV cache types. The UI shows `weights + KV + overhead`, the budget after reserve and other GPU usage, headroom and the limiting term.
 - **Hardware telemetry.** CPU, RAM, AMD `amdgpu` VRAM, temperature, power, fan, and sparklines, with no extra daemon required.
-- **Preset and model editing.** Edit resolved launch options in the TUI; changes are written back to TOML with comments and ordering preserved.
+- **Preset and model editing.** Edit resolved launch options in the TUI; changes are written back to TOML with comments and ordering preserved. Changing `ctx`, cache type, `gpu_layers` or `n_cpu_moe` previews the new estimate without saving.
 - **Six tabs, themes, commands.** Dashboard, Models, Presets, Router, Hardware, Logs; built-in and custom themes; slash commands and completion.
 - **Doctor.** Checks the binary, model files, hardware, and VRAM fit before you launch.
 
@@ -74,7 +74,7 @@ wool stop server
 
 ```text
 wool [--config PATH]                 open the TUI
-wool doctor                          check binary, models and VRAM fit
+wool doctor [--json]                 check binary, models and VRAM fit
 wool list [--json]                   list models and presets
 wool run TARGET [options]            start a model or preset detached
 wool stop [server|router|all]        stop detached servers
@@ -141,6 +141,8 @@ built-in defaults -> [defaults] -> [models.<id>] -> [presets.<name>]
 Unset keys inherit; explicit zero/false values are preserved. `threads = 0` resolves to `runtime.NumCPU()`, and `threads_batch = 0` follows `threads`.
 
 `wool config explain TARGET` shows every effective launch option with the layer that supplied it (`built-in`, `defaults`, `model` or `preset`). Add `--json` for `value`, `source` and `layer` fields. In the editor, the same source is shown next to each row; `backspace` or `delete` removes that override and falls back to the next layer.
+
+The dashboard and `wool doctor` decompose the estimate into weights, KV cache and overhead, then compare it with the budget for a new server: GPU total minus `router.memory_margin_mib` minus VRAM used by other processes. A running standalone server's own allocation is excluded so a restart is not charged twice. `wool doctor --json` includes the same `estimate`, `budget`, `headroom_bytes` and `limiting_term` fields. While editing, the preview updates as you type; `enter` commits and `esc` discards.
 
 ### Custom themes
 

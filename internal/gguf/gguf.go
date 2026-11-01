@@ -19,18 +19,18 @@ const magic = 0x46554747 // "GGUF" little-endian
 
 // Meta is the subset of GGUF metadata needed for a memory estimate.
 type Meta struct {
-	Architecture string
-	BlockCount   int
-	Embedding    int
-	HeadCount    int
-	HeadCountKV  []int // per layer; empty means use HeadCount
-	KeyLength    int
-	ValueLength  int
-	CtxTrain     int
+	Architecture string `json:"architecture"`
+	BlockCount   int    `json:"block_count"`
+	Embedding    int    `json:"embedding"`
+	HeadCount    int    `json:"head_count"`
+	HeadCountKV  []int  `json:"head_count_kv,omitempty"` // per layer; empty means use HeadCount
+	KeyLength    int    `json:"key_length"`
+	ValueLength  int    `json:"value_length"`
+	CtxTrain     int    `json:"ctx_train"`
 	// FullAttentionInterval is set by hybrid architectures (qwen35 and
 	// friends): only every Nth layer keeps a KV cache, the rest are
 	// recurrent and use constant-size state.
-	FullAttentionInterval int
+	FullAttentionInterval int `json:"full_attention_interval,omitempty"`
 }
 
 type valueKind int
@@ -450,21 +450,90 @@ func BytesPerElement(t string) float64 {
 
 // Estimate is a conservative VRAM estimate.
 type Estimate struct {
-	FileBytes    uint64
-	WeightsBytes uint64
-	KVBytes      uint64
-	Overhead     uint64
-	Total        uint64
+	FileBytes    uint64 `json:"file_bytes"`
+	WeightsBytes uint64 `json:"weights_bytes"`
+	KVBytes      uint64 `json:"kv_bytes"`
+	Overhead     uint64 `json:"overhead_bytes"`
+	Total        uint64 `json:"total_bytes"`
+}
+
+// LimitingTerm names the largest component of the estimate. Ties prefer
+// weights because they dominate most dense models.
+func (e Estimate) LimitingTerm() string {
+	switch {
+	case e.WeightsBytes >= e.KVBytes && e.WeightsBytes >= e.Overhead:
+		return "weights"
+	case e.KVBytes >= e.Overhead:
+		return "kv"
+	default:
+		return "overhead"
+	}
+}
+
+// Budget is the VRAM available to a new server. Used is the GPU's current
+// usage; OwnUsed is the part belonging to the running wool server and is
+// excluded from OtherUsed so a restart is not charged twice.
+type Budget struct {
+	Total     uint64 `json:"total_bytes"`
+	Used      uint64 `json:"used_bytes"`
+	Reserve   uint64 `json:"reserve_bytes"`
+	OwnUsed   uint64 `json:"own_used_bytes"`
+	OtherUsed uint64 `json:"other_used_bytes"`
+	Available uint64 `json:"available_bytes"`
+	Known     bool   `json:"known"`
+	OwnKnown  bool   `json:"own_known"`
+}
+
+// ComputeBudget derives the budget for a new server. own is the running
+// wool server's VRAM; pass ownKnown=false when it cannot be measured, in
+// which case all current usage counts as other usage.
+func ComputeBudget(total, used, reserve, own uint64, ownKnown bool) Budget {
+	b := Budget{
+		Total:    total,
+		Used:     used,
+		Reserve:  reserve,
+		OwnKnown: ownKnown,
+	}
+	if total == 0 {
+		return b
+	}
+	b.Known = true
+	if ownKnown {
+		if own > used {
+			own = used
+		}
+		b.OwnUsed = own
+	}
+	b.OtherUsed = used - b.OwnUsed
+	if reserve >= total {
+		return b
+	}
+	remaining := total - reserve
+	if b.OtherUsed < remaining {
+		b.Available = remaining - b.OtherUsed
+	}
+	return b
+}
+
+// Headroom is the signed difference between the budget and an estimate.
+// Positive values fit; negative values exceed the budget. It is zero when the
+// budget is unknown.
+func (b Budget) Headroom(e Estimate) int64 {
+	if !b.Known {
+		return 0
+	}
+	return int64(b.Available) - int64(e.Total)
 }
 
 // EstimateVRAM estimates GPU memory for the given context. gpuLayers is the
-// number of transformer layers offloaded; values >= BlockCount mean all.
-// Overhead covers compute buffers and allocator slack, not the KV cache.
+// number of transformer layers offloaded; values >= BlockCount mean all and
+// zero means no layers. Overhead covers compute buffers and allocator slack,
+// not the KV cache.
 func EstimateVRAM(m Meta, fileBytes uint64, ctx, gpuLayers int, cacheK, cacheV string) Estimate {
-	if gpuLayers <= 0 {
+	if gpuLayers > m.BlockCount {
 		gpuLayers = m.BlockCount
 	}
-	if gpuLayers > m.BlockCount {
+	if gpuLayers < 0 {
 		gpuLayers = m.BlockCount
 	}
 	frac := float64(gpuLayers) / float64(m.BlockCount)

@@ -197,7 +197,8 @@ After merging:
 - `threads = 0` becomes `runtime.NumCPU()`;
 - `threads_batch = 0` becomes the resolved `threads`;
 - `gpu_layers >= block count` is treated as "all layers" by the estimator,
-  and passed through as the user wrote it (the example uses `999`);
+  zero means no offloaded layers, negative values mean all, and the value is
+  passed through as the user wrote it (the example uses `999`);
 - the alias falls back to the model ID;
 - model and preset paths expand `~` and are made absolute.
 
@@ -400,13 +401,15 @@ calls `/health`, `/models`, and for the selected loaded router model
 unresponsive server cannot freeze the UI.
 
 Fit and GGUF metadata are cached per target path; missing or unreadable files
-are cached too, so a broken model does not cause a stat/read every frame.
+are cached too, so a broken model does not cause a stat/read every frame. The
+budget is cached by GPU total/used, reserve and the running server PID, so the
+`fdinfo` scan only runs when one of those changes.
 
 ### Tabs
 
 | Tab | Contents |
 | --- | --- |
-| Dashboard | selected preset, resolved options, fit bar, log tail |
+| Dashboard | selected preset, resolved options, estimate breakdown and fit bar, log tail |
 | Models | configured models, file size, VRAM estimate, alias |
 | Presets | recipes with model, context and fit |
 | Router | router state, model list, selected model stats and slots |
@@ -522,6 +525,26 @@ driver overhead, so a model with `n_cpu_moe` can still show as over-VRAM.
 Doctor adds the note `estimate ignores n_cpu_moe` in that case. The UI uses
 `!` for an over-budget estimate, not a hard launch block.
 
+`gguf.ComputeBudget` turns live VRAM into a budget for a *new* server:
+
+```text
+budget = total - reserve - other_used
+reserve = router.memory_margin_mib
+other_used = GPU used - running standalone server's own usage
+```
+
+The server's own usage is read best-effort from `drm-memory-vram` in
+`/proc/<pid>/fdinfo`; router child allocations are not separated, so they
+count as other usage. If the process cannot be measured, all current usage
+counts as other usage. Headroom is `budget - estimate` and may be negative.
+
+The dashboard and editor draw a segmented bar (`weights`, `KV`, `overhead`)
+against the card's total VRAM and name the largest term as the limiting one.
+The editor recomputes the estimate from the draft value while typing; it does
+not write the file until `Enter`. `Esc` restores the resolved value. Because
+`n_cpu_moe` is not modelled, the preview says the GPU estimate is unchanged
+rather than pretending to account for it.
+
 ## Doctor
 
 `wool doctor` checks:
@@ -531,16 +554,18 @@ Doctor adds the note `estimate ignores n_cpu_moe` in that case. The UI uses
 - hardware and VRAM;
 - model directories and GGUF files;
 - duplicate model paths (the router would expose the same weights twice);
-- per-model and per-preset fit estimates.
+- per-model and per-preset fit estimates, including the weights/KV/overhead
+  breakdown, budget, headroom and limiting term.
 
-Warnings do not make the command fail; failures do. The TUI shows the same
-report in a scrollable overlay.
+Warnings do not make the command fail; failures do. `wool doctor --json`
+exposes the same report. The TUI shows the plain-text report in a scrollable
+overlay.
 
 ## CLI reference
 
 ```text
 wool [--config PATH]                 open the TUI
-wool doctor                          check binary, models and VRAM fit
+wool doctor [--json]                 check binary, models and VRAM fit
 wool list [--json]                   list models and presets
 wool run TARGET [options]            start a model or preset detached
 wool stop [server|router|all]        stop detached servers

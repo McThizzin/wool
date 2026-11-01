@@ -5,7 +5,7 @@ Part of [M1](../roadmap.md#milestone-m1). See the
 
 **Priority** P0 · **Size** M · **Depends** none
 
-**Status** planned
+**Status** shipped
 
 **Problem.** The UI shows one total and a bar. When a model does not fit, users
 cannot tell whether weights, KV cache or overhead is responsible, and tuning
@@ -24,9 +24,15 @@ changes before they are written.
 
 **Acceptance.**
 
-- [ ] Fit bar is segmented by weights, KV and overhead.
-- [ ] Changing `ctx`, `cache_type_k/v`, `gpu_layers` or `n_cpu_moe` updates the
+- [x] Fit bar is segmented by weights, KV and overhead.
+- [x] Changing `ctx`, `cache_type_k/v`, `gpu_layers` or `n_cpu_moe` updates the
       preview without writing the file.
-- [ ] The preview names the limiting term and the headroom.
-- [ ] `wool doctor --json` exposes the breakdown.
-- [ ] Tests cover the arithmetic and the editor preview path.
+- [x] The preview names the limiting term and the headroom.
+- [x] `wool doctor --json` exposes the breakdown.
+- [x] Tests cover the arithmetic and the editor preview path.
+
+**Implementation notes.** `gguf.ComputeBudget` derives
+`available = total - reserve - other_used`; `ProcessVRAM` reads
+`drm-memory-vram` from `/proc/<pid>/fdinfo` so a running standalone server's
+own allocation is not counted twice. `n_cpu_moe` is still not modelled: the
+preview says so instead of pretending the estimate changed.

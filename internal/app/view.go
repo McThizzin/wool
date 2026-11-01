@@ -9,6 +9,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"wool/internal/config"
+	"wool/internal/gguf"
 	"wool/internal/ui"
 )
 
@@ -244,23 +245,85 @@ func (m *Model) fitLine(w int) []string {
 	if !fi.Ready {
 		return []string{st.Muted.Render("fit: model file not readable")}
 	}
-	if fi.VRAMTotal == 0 {
-		return []string{st.Muted.Render(fmt.Sprintf("estimated %s (no GPU VRAM detected)", ui.HumanBytes(fi.Est.Total)))}
+	est := fi.Est
+	budget := m.budget()
+	lines := []string{st.Muted.Render("fit " + fitBreakdown(est))}
+	if !budget.Known {
+		return append(lines, st.Muted.Render("budget unknown (no GPU VRAM detected)"))
 	}
-	pct := float64(fi.Est.Total) / float64(fi.VRAMTotal) * 100
-	barW := clamp(w-34, 10, 28)
-	bar := ui.Bar(pct, barW, '█', '░')
+	head := budget.Headroom(est)
 	style := st.Good
-	verdict := "fits"
-	if fi.Est.Total > fi.VRAMTotal {
+	verdict := "headroom " + ui.HumanBytes(uint64(head))
+	if head < 0 {
 		style = st.Bad
-		verdict = "over"
-	} else if pct > 90 {
+		verdict = "over by " + ui.HumanBytes(uint64(-head))
+	} else if budget.Available > 0 && ui.Percent(est.Total, budget.Available) > 90 {
 		style = st.Warn
-		verdict = "tight"
 	}
-	label := fmt.Sprintf("VRAM %s / %s", ui.HumanBytes(fi.Est.Total), ui.HumanBytes(fi.VRAMTotal))
-	return []string{style.Render(label) + " " + style.Render(bar) + fmt.Sprintf(" %3.0f%% %s", pct, verdict)}
+	pct := ui.Percent(est.Total, budget.Available)
+	barW := clamp(w-28, 10, 26)
+	lines = append(lines, m.fitBar(est, budget, barW)+" "+
+		style.Render(fmt.Sprintf("%3.0f%% %s", pct, verdict)))
+	detail := fmt.Sprintf("budget %s · used %s of %s · reserve %s",
+		ui.HumanBytes(budget.Available), ui.HumanBytes(budget.Used),
+		ui.HumanBytes(budget.Total), ui.HumanBytes(budget.Reserve))
+	if budget.OwnKnown && budget.OwnUsed > 0 {
+		detail += " · server " + ui.HumanBytes(budget.OwnUsed)
+	}
+	lines = append(lines, st.Muted.Render(detail+" · limit "+est.LimitingTerm()))
+	return lines
+}
+
+// fitBreakdown renders the estimate as weights + KV + overhead = total.
+func fitBreakdown(e gguf.Estimate) string {
+	return fmt.Sprintf("weights %s + kv %s + overhead %s = %s",
+		ui.HumanBytes(e.WeightsBytes), ui.HumanBytes(e.KVBytes),
+		ui.HumanBytes(e.Overhead), ui.HumanBytes(e.Total))
+}
+
+// fitBar draws the estimate as segments against the GPU's total VRAM.
+func (m *Model) fitBar(e gguf.Estimate, b gguf.Budget, width int) string {
+	st := m.render.Styles
+	if width <= 0 {
+		return ""
+	}
+	scale := e.Total
+	if b.Known && b.Total > scale {
+		scale = b.Total
+	}
+	if scale == 0 {
+		return st.Muted.Render(strings.Repeat("░", width))
+	}
+	cells := func(v uint64) int {
+		return int(float64(v) / float64(scale) * float64(width))
+	}
+	wc, kc, oc := cells(e.WeightsBytes), cells(e.KVBytes), cells(e.Overhead)
+	for wc+kc+oc > width {
+		switch {
+		case oc > 0:
+			oc--
+		case kc > 0:
+			kc--
+		default:
+			wc--
+		}
+	}
+	free := width - wc - kc - oc
+	return st.Accent.Render(strings.Repeat("█", wc)) +
+		st.Warn.Render(strings.Repeat("▓", kc)) +
+		st.Muted.Render(strings.Repeat("▒", oc)) +
+		st.Muted.Render(strings.Repeat("░", free))
+}
+
+func signedBytes(n int64) string {
+	switch {
+	case n > 0:
+		return "+" + ui.HumanBytes(uint64(n))
+	case n < 0:
+		return "-" + ui.HumanBytes(uint64(-n))
+	default:
+		return "0 B"
+	}
 }
 
 func (m *Model) modelsBody(w, h int) []string {
@@ -292,7 +355,7 @@ func (m *Model) modelsBody(w, h int) []string {
 		fitText := "-"
 		if fit.Ready {
 			fitText = ui.HumanBytes(fit.Est.Total)
-			if fit.VRAMTotal > 0 && fit.Est.Total > fit.VRAMTotal {
+			if b := m.budget(); b.Known && b.Headroom(fit.Est) < 0 {
 				fitText += " !"
 			}
 		}
@@ -325,7 +388,7 @@ func (m *Model) presetsBody(w, h int) []string {
 		fit := ""
 		if fi := m.fitFor(id, "preset"); fi.Ready {
 			fit = ui.HumanBytes(fi.Est.Total)
-			if fi.VRAMTotal > 0 && fi.Est.Total > fi.VRAMTotal {
+			if b := m.budget(); b.Known && b.Headroom(fi.Est) < 0 {
 				fit += " !"
 			}
 		}

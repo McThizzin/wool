@@ -186,6 +186,66 @@ func TestEstimateVRAM(t *testing.T) {
 	if all.KVBytes != 1024*4*2*2*2 {
 		t.Fatalf("f16 kv = %d", all.KVBytes)
 	}
+	// zero means no offloaded layers; negative means all
+	zero := EstimateVRAM(m, file, 1024, 0, "f16", "f16")
+	if zero.WeightsBytes != 0 {
+		t.Fatalf("zero weights = %d", zero.WeightsBytes)
+	}
+	neg := EstimateVRAM(m, file, 1024, -1, "f16", "f16")
+	if neg.WeightsBytes != file {
+		t.Fatalf("negative weights = %d, want %d", neg.WeightsBytes, file)
+	}
+}
+
+func TestEstimateLimitingTerm(t *testing.T) {
+	cases := []struct {
+		e    Estimate
+		want string
+	}{
+		{Estimate{WeightsBytes: 3, KVBytes: 2, Overhead: 1}, "weights"},
+		{Estimate{WeightsBytes: 2, KVBytes: 3, Overhead: 1}, "kv"},
+		{Estimate{WeightsBytes: 1, KVBytes: 2, Overhead: 3}, "overhead"},
+		{Estimate{WeightsBytes: 2, KVBytes: 2, Overhead: 2}, "weights"},
+	}
+	for _, tc := range cases {
+		if got := tc.e.LimitingTerm(); got != tc.want {
+			t.Fatalf("%+v limiting = %q, want %q", tc.e, got, tc.want)
+		}
+	}
+}
+
+func TestComputeBudget(t *testing.T) {
+	const g = 1 << 30
+	b := ComputeBudget(8*g, 3*g, 512<<20, 2*g, true)
+	if !b.Known || b.OwnUsed != 2*g || b.OtherUsed != 1*g {
+		t.Fatalf("budget = %+v", b)
+	}
+	if b.Available != 8*g-(512<<20)-g {
+		t.Fatalf("available = %d", b.Available)
+	}
+	e := Estimate{Total: 6 * g}
+	if b.Headroom(e) != int64(b.Available)-int64(e.Total) {
+		t.Fatalf("headroom = %d", b.Headroom(e))
+	}
+	// An unmeasured own allocation counts as someone else's usage.
+	unknown := ComputeBudget(8*g, 3*g, 512<<20, 0, false)
+	if unknown.OwnUsed != 0 || unknown.OtherUsed != 3*g {
+		t.Fatalf("unknown own = %+v", unknown)
+	}
+	// No GPU means no known budget.
+	if none := ComputeBudget(0, 0, 0, 0, false); none.Known || none.Headroom(e) != 0 {
+		t.Fatalf("none = %+v", none)
+	}
+	// A reserve larger than the card leaves no budget rather than wrapping.
+	tiny := ComputeBudget(1*g, 0, 2*g, 0, false)
+	if tiny.Available != 0 || tiny.Headroom(e) != -int64(e.Total) {
+		t.Fatalf("tiny = %+v", tiny)
+	}
+	// Own usage is clamped to the GPU total.
+	clamped := ComputeBudget(8*g, 1*g, 0, 5*g, true)
+	if clamped.OwnUsed != 1*g || clamped.OtherUsed != 0 {
+		t.Fatalf("clamped = %+v", clamped)
+	}
 }
 
 func TestBytesPerElement(t *testing.T) {

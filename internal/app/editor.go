@@ -9,6 +9,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"wool/internal/config"
+	"wool/internal/gguf"
 	"wool/internal/ui"
 )
 
@@ -37,6 +38,25 @@ type editor struct {
 	editing bool
 	visible int
 	err     string
+
+	base    config.Resolved
+	baseEst gguf.Estimate
+	meta    gguf.Meta
+	size    uint64
+	hasMeta bool
+	metaErr string
+	preview editorPreview
+}
+
+// editorPreview is the unsaved estimate for the draft value being typed.
+type editorPreview struct {
+	Ready   bool
+	Err     string
+	Est     gguf.Estimate
+	Budget  gguf.Budget
+	Delta   int64
+	Changed bool
+	Note    string
 }
 
 func (m *Model) openEditor() {
@@ -95,7 +115,128 @@ func (m *Model) openEditor() {
 		}
 		e.fields[i].source = src
 	}
+	e.base = r
+	if meta, err := m.metaFor(r.ModelPath); err != nil {
+		e.metaErr = err.Error()
+	} else {
+		e.meta, e.size, e.hasMeta = meta.Meta, meta.Size, true
+		e.baseEst = gguf.EstimateVRAM(meta.Meta, meta.Size, r.Ctx, r.GPULayers, r.CacheTypeK, r.CacheTypeV)
+	}
+	e.preview = m.previewFor(e, r)
 	m.editor = e
+}
+
+// previewFor computes the unsaved estimate for a draft configuration.
+func (m *Model) previewFor(e *editor, draft config.Resolved) editorPreview {
+	p := editorPreview{Budget: m.budget()}
+	if !e.hasMeta {
+		p.Err = e.metaErr
+		return p
+	}
+	p.Est = gguf.EstimateVRAM(e.meta, e.size, draft.Ctx, draft.GPULayers, draft.CacheTypeK, draft.CacheTypeV)
+	p.Ready = true
+	p.Delta = int64(p.Est.Total) - int64(e.baseEst.Total)
+	p.Changed = p.Delta != 0 ||
+		draft.Ctx != e.base.Ctx ||
+		draft.GPULayers != e.base.GPULayers ||
+		draft.NCPUMoE != e.base.NCPUMoE ||
+		draft.CacheTypeK != e.base.CacheTypeK ||
+		draft.CacheTypeV != e.base.CacheTypeV
+	if draft.NCPUMoE != e.base.NCPUMoE {
+		p.Note = "n_cpu_moe is not modelled yet; the GPU estimate is unchanged"
+	} else if draft.NCPUMoE > 0 {
+		p.Note = "n_cpu_moe is not modelled yet; the estimate may be conservative"
+	}
+	return p
+}
+
+// refreshPreview recomputes the preview from the field currently being edited.
+func (m *Model) refreshPreview() {
+	e := m.editor
+	if e == nil {
+		return
+	}
+	f := e.fields[e.sel]
+	raw := strings.TrimSpace(e.input.Value())
+	draft := e.base
+	switch f.key {
+	case "ctx":
+		v, err := strconv.Atoi(raw)
+		if err != nil {
+			e.preview = editorPreview{Err: "ctx must be an integer"}
+			return
+		}
+		draft.Ctx = v
+	case "gpu_layers":
+		v, err := strconv.Atoi(raw)
+		if err != nil {
+			e.preview = editorPreview{Err: "gpu_layers must be an integer"}
+			return
+		}
+		draft.GPULayers = v
+	case "n_cpu_moe":
+		v, err := strconv.Atoi(raw)
+		if err != nil {
+			e.preview = editorPreview{Err: "n_cpu_moe must be an integer"}
+			return
+		}
+		draft.NCPUMoE = v
+	case "cache_type_k":
+		draft.CacheTypeK = raw
+	case "cache_type_v":
+		draft.CacheTypeV = raw
+	default:
+		return
+	}
+	e.preview = m.previewFor(e, draft)
+}
+
+// editorPreviewLines renders the unsaved estimate, its headroom and the
+// limiting term. It is capped at three lines so the field list stays usable.
+func (m *Model) editorPreviewLines(w int) []string {
+	st := m.render.Styles
+	p := m.editor.preview
+	if p.Err != "" {
+		return []string{st.Warn.Render("preview: " + p.Err)}
+	}
+	if !p.Ready {
+		return []string{st.Muted.Render("preview: model metadata unreadable")}
+	}
+	delta := ""
+	if p.Delta != 0 {
+		delta = "  Δ " + signedBytes(p.Delta)
+	}
+	lines := []string{st.Muted.Render("preview " + fitBreakdown(p.Est) + delta)}
+	budget := p.Budget
+	style := st.Muted
+	verdict := "budget unknown"
+	if budget.Known {
+		head := budget.Headroom(p.Est)
+		style = st.Good
+		verdict = "headroom " + ui.HumanBytes(uint64(head))
+		if head < 0 {
+			style = st.Bad
+			verdict = "over by " + ui.HumanBytes(uint64(-head))
+		} else if budget.Available > 0 && ui.Percent(p.Est.Total, budget.Available) > 90 {
+			style = st.Warn
+		}
+	}
+	barW := clamp(w-24, 8, 22)
+	lines = append(lines, m.fitBar(p.Est, budget, barW)+" "+
+		style.Render(verdict)+" · limit "+p.Est.LimitingTerm())
+	switch {
+	case p.Note != "":
+		lines = append(lines, st.Warn.Render(p.Note))
+	case budget.Known:
+		detail := fmt.Sprintf("budget %s · used %s of %s · reserve %s",
+			ui.HumanBytes(budget.Available), ui.HumanBytes(budget.Used),
+			ui.HumanBytes(budget.Total), ui.HumanBytes(budget.Reserve))
+		if budget.OwnKnown && budget.OwnUsed > 0 {
+			detail += " · server " + ui.HumanBytes(budget.OwnUsed)
+		}
+		lines = append(lines, st.Muted.Render(detail))
+	}
+	return lines
 }
 
 func quoteTOML(s string) string {
@@ -115,7 +256,11 @@ func (m *Model) editorView() string {
 		h = 10
 	}
 	bodyH := h - 4
-	visible := bodyH
+	preview := m.editorPreviewLines(w - 4)
+	visible := bodyH - 1 - len(preview)
+	if visible < 1 {
+		visible = 1
+	}
 	e.visible = visible
 	start := clamp(e.scroll, 0, maxInt(0, len(e.fields)-visible))
 	end := start + visible
@@ -137,6 +282,11 @@ func (m *Model) editorView() string {
 		} else {
 			body = append(body, ui.Fit(line, w-4))
 		}
+	}
+	body = append(body, "")
+	body = append(body, preview...)
+	if len(body) > bodyH {
+		body = body[:bodyH]
 	}
 	panel := m.render.Panel(e.title, "enter edit · backspace reset · esc close", body, w, h, true)
 	lines := strings.Split(panel, "\n")
@@ -164,6 +314,7 @@ func (m *Model) updateEditor(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			e.editing = false
 			e.err = ""
 			e.input.Blur()
+			e.preview = m.previewFor(e, e.base)
 			return m, nil
 		case "enter":
 			value := strings.TrimSpace(e.input.Value())
@@ -190,6 +341,7 @@ func (m *Model) updateEditor(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		var cmd tea.Cmd
 		e.input, cmd = e.input.Update(msg)
+		m.refreshPreview()
 		return m, cmd
 	}
 	switch msg.String() {
@@ -260,6 +412,7 @@ func (m *Model) updateEditor(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		e.input.SetValue(unquoteTOML(f.value))
 		e.input.CursorEnd()
 		e.input.Focus()
+		m.refreshPreview()
 		return m, textinput.Blink
 	}
 	return m, nil

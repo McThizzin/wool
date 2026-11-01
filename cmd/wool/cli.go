@@ -31,7 +31,7 @@ const usageText = `wool - llama.cpp server launcher and router TUI
 
 Usage:
   wool [--config PATH]                 open the TUI
-  wool doctor                          check binary, models and VRAM fit
+  wool doctor [--json]                 check binary, models and VRAM fit
   wool list [--json]                   list models and presets
   wool run TARGET [options]            start a model or preset detached
   wool stop [server|router|all]        stop detached servers
@@ -73,7 +73,7 @@ func run(args []string) int {
 		fmt.Printf("wool %s (commit %s, built %s)\n", version, commit, date)
 		return 0
 	case "doctor":
-		return cmdDoctor(cfgPath)
+		return cmdDoctor(cfgPath, rest)
 	case "config":
 		return cmdConfig(cfgPath, rest)
 	case "list":
@@ -143,14 +143,26 @@ func printConfigError(path string, err error) {
 	}
 }
 
-func cmdDoctor(cfgPath string) int {
+func cmdDoctor(cfgPath string, args []string) int {
+	fs := flag.NewFlagSet("doctor", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	asJSON := fs.Bool("json", false, "print JSON")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
 	cfg, err := loadConfig(cfgPath)
 	if err != nil {
 		printConfigError(cfgPath, err)
 		return 1
 	}
 	rep := doctor.Run(cfg, cfgPath)
-	fmt.Print(rep.Print())
+	if *asJSON {
+		if code := writeJSON(rep); code != 0 {
+			return code
+		}
+	} else {
+		fmt.Print(rep.Print())
+	}
 	if len(rep.Failures()) > 0 {
 		return 1
 	}

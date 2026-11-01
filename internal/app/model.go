@@ -86,6 +86,9 @@ type Model struct {
 	fitCache map[string]fitInfo
 	meta     map[string]metaEntry
 
+	budgetKey string
+	budgetVal gguf.Budget
+
 	logLines  []string
 	logSel    int // 0 server, 1 router
 	logScroll int
@@ -561,6 +564,32 @@ func (m *Model) computeFit(r config.Resolved) fitInfo {
 	fi.Est = gguf.EstimateVRAM(meta.Meta, meta.Size, r.Ctx, r.GPULayers, r.CacheTypeK, r.CacheTypeV)
 	fi.Ready = true
 	return fi
+}
+
+// budget is the VRAM available to a new server. The running standalone
+// server's own allocation is excluded so a restart is not counted twice.
+func (m *Model) budget() gguf.Budget {
+	gpu, ok := m.snap.Primary()
+	if !ok || !gpu.HasVRAM || gpu.VRAMTotal == 0 {
+		return gguf.Budget{}
+	}
+	reserve := uint64(maxInt(0, m.cfg.Router.MemoryMarginMiB)) << 20
+	pid := 0
+	if m.hasServer {
+		pid = m.server.PID
+	}
+	key := fmt.Sprintf("%d/%d/%d/%d", gpu.VRAMTotal, gpu.VRAMUsed, reserve, pid)
+	if key == m.budgetKey {
+		return m.budgetVal
+	}
+	var own uint64
+	var ownKnown bool
+	if pid > 0 {
+		own, ownKnown = sysinfo.ProcessVRAM(pid)
+	}
+	m.budgetKey = key
+	m.budgetVal = gguf.ComputeBudget(gpu.VRAMTotal, gpu.VRAMUsed, reserve, own, ownKnown)
+	return m.budgetVal
 }
 
 func (m *Model) metaFor(path string) (metaEntry, error) {

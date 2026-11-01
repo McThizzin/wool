@@ -119,3 +119,28 @@ func TestScanGPUsMissingRoot(t *testing.T) {
 		t.Fatalf("gpus = %+v", gpus)
 	}
 }
+
+func TestProcessVRAM(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "42", "fdinfo")
+	writeFile(t, filepath.Join(dir, "3"), "pos:\t0\nflags:\t02\nmnt_id:\t10\n")
+	writeFile(t, filepath.Join(dir, "4"), "pos:\t0\ndrm-memory-vram:\t1048576 KiB\n")
+	writeFile(t, filepath.Join(dir, "5"), "drm-memory-vram:\t512 KiB\ndrm-memory-gtt:\t64 KiB\n")
+	got, ok := processVRAM(root, 42)
+	if !ok {
+		t.Fatal("expected vram to be found")
+	}
+	if want := uint64((1048576 + 512) * 1024); got != want {
+		t.Fatalf("vram = %d, want %d", got, want)
+	}
+	if _, ok := processVRAM(root, 99); ok {
+		t.Fatal("missing pid should not report vram")
+	}
+	writeFile(t, filepath.Join(root, "7", "fdinfo", "3"), "pos:\t0\n")
+	if _, ok := processVRAM(root, 7); ok {
+		t.Fatal("fdinfo without drm-memory-vram should not report vram")
+	}
+	if _, ok := processVRAM(root, 0); ok {
+		t.Fatal("zero pid should not report vram")
+	}
+}

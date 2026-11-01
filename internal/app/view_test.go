@@ -3,6 +3,7 @@ package app
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -11,6 +12,7 @@ import (
 
 	"wool/internal/config"
 	"wool/internal/daemon"
+	"wool/internal/gguf"
 	"wool/internal/sysinfo"
 )
 
@@ -160,6 +162,93 @@ func TestEditorRejectsBadNumber(t *testing.T) {
 	}
 	if !m.editor.editing {
 		t.Fatal("editor should stay in edit mode after an error")
+	}
+}
+
+func TestEditorPreviewTracksDraftAndDiscards(t *testing.T) {
+	m := testModel(t)
+	m.setTab(tabPresets)
+	m.openEditor()
+	if m.editor == nil {
+		t.Fatal("editor did not open")
+	}
+	e := m.editor
+	// The example config points at files outside the test directory, so seed
+	// the metadata the editor would normally read from the GGUF.
+	e.meta = gguf.Meta{
+		Architecture: "x", BlockCount: 4, Embedding: 8, HeadCount: 2,
+		HeadCountKV: []int{1, 1, 1, 1}, KeyLength: 4, ValueLength: 4,
+	}
+	e.size = 4 << 30
+	e.hasMeta = true
+	e.metaErr = ""
+	e.baseEst = gguf.EstimateVRAM(e.meta, e.size, e.base.Ctx, e.base.GPULayers, e.base.CacheTypeK, e.base.CacheTypeV)
+	e.preview = m.previewFor(e, e.base)
+	if !e.preview.Ready || e.preview.Changed {
+		t.Fatalf("initial preview = %+v", e.preview)
+	}
+	if !e.preview.Budget.Known || e.preview.Budget.Available == 0 {
+		t.Fatalf("budget = %+v", e.preview.Budget)
+	}
+
+	before, err := os.ReadFile(m.cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := editorFieldIndex(t, m, "ctx")
+	e.sel = ctx
+	if _, _ = m.updateEditor(tea.KeyMsg{Type: tea.KeyEnter}); !e.editing {
+		t.Fatal("editor did not enter edit mode")
+	}
+	next := e.base.Ctx + 4096
+	e.input.SetValue(strconv.Itoa(next))
+	m.refreshPreview()
+	if !e.preview.Ready || !e.preview.Changed {
+		t.Fatalf("preview did not track the draft: %+v", e.preview)
+	}
+	if e.preview.Est.KVBytes <= e.baseEst.KVBytes || e.preview.Delta <= 0 {
+		t.Fatalf("preview estimate = %+v, base = %+v", e.preview.Est, e.baseEst)
+	}
+	m.width, m.height = 110, 34
+	view := m.View()
+	if !strings.Contains(view, "preview weights") || !strings.Contains(view, "limit") {
+		t.Fatalf("preview missing from editor:\n%s", view)
+	}
+	after, err := os.ReadFile(m.cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(before) != string(after) {
+		t.Fatal("preview wrote the config before Enter commit")
+	}
+
+	if _, _ = m.updateEditor(tea.KeyMsg{Type: tea.KeyEsc}); e.editing {
+		t.Fatal("esc did not leave edit mode")
+	}
+	if e.preview.Changed || e.preview.Est.Total != e.baseEst.Total {
+		t.Fatalf("esc did not discard the draft: %+v", e.preview)
+	}
+
+	// n_cpu_moe is not modelled: the draft is marked changed, the arithmetic
+	// is not, and the preview says why.
+	e.sel = editorFieldIndex(t, m, "n_cpu_moe")
+	if _, _ = m.updateEditor(tea.KeyMsg{Type: tea.KeyEnter}); !e.editing {
+		t.Fatal("n_cpu_moe did not enter edit mode")
+	}
+	e.input.SetValue("8")
+	m.refreshPreview()
+	if !e.preview.Changed || e.preview.Delta != 0 || !strings.Contains(e.preview.Note, "not modelled") {
+		t.Fatalf("n_cpu_moe preview = %+v", e.preview)
+	}
+	if _, _ = m.updateEditor(tea.KeyMsg{Type: tea.KeyEsc}); e.editing {
+		t.Fatal("esc did not leave n_cpu_moe edit mode")
+	}
+	after, err = os.ReadFile(m.cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(before) != string(after) {
+		t.Fatal("n_cpu_moe preview wrote the config")
 	}
 }
 

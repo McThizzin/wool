@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"wool/internal/config"
+	"wool/internal/daemon"
 	"wool/internal/gguf"
 	"wool/internal/sysinfo"
 )
@@ -38,46 +39,51 @@ func (l Level) String() string {
 
 // Check is one readiness result.
 type Check struct {
-	Level  Level
-	Name   string
-	Detail string
+	Level  Level  `json:"level"`
+	Name   string `json:"name"`
+	Detail string `json:"detail"`
 }
 
 // PresetFit is a memory estimate for one preset.
 type PresetFit struct {
-	ID       string
-	Ctx      int
-	Estimate gguf.Estimate
-	Known    bool
-	Fits     bool
-	Note     string
+	ID       string        `json:"id"`
+	Ctx      int           `json:"ctx"`
+	Estimate gguf.Estimate `json:"estimate"`
+	Known    bool          `json:"known"`
+	Fits     bool          `json:"fits"`
+	Headroom int64         `json:"headroom_bytes"`
+	Limiting string        `json:"limiting_term,omitempty"`
+	Note     string        `json:"note,omitempty"`
 }
 
 // ModelReport describes one configured model.
 type ModelReport struct {
-	ID      string
-	Path    string
-	Alias   string
-	Ctx     int
-	Exists  bool
-	Size    uint64
-	Meta    gguf.Meta
-	HasMeta bool
-	MetaErr string
-	Est     gguf.Estimate
-	HasEst  bool
-	FitNote string
-	Presets []PresetFit
+	ID       string        `json:"id"`
+	Path     string        `json:"path"`
+	Alias    string        `json:"alias,omitempty"`
+	Ctx      int           `json:"ctx"`
+	Exists   bool          `json:"exists"`
+	Size     uint64        `json:"size_bytes"`
+	Meta     gguf.Meta     `json:"meta"`
+	HasMeta  bool          `json:"has_meta"`
+	MetaErr  string        `json:"meta_error,omitempty"`
+	Est      gguf.Estimate `json:"estimate"`
+	HasEst   bool          `json:"has_estimate"`
+	Headroom int64         `json:"headroom_bytes"`
+	Limiting string        `json:"limiting_term,omitempty"`
+	FitNote  string        `json:"fit_note,omitempty"`
+	Presets  []PresetFit   `json:"presets,omitempty"`
 }
 
 // Report is the full doctor result.
 type Report struct {
-	ConfigPath string
-	Checks     []Check
-	Models     []ModelReport
-	GPUs       []sysinfo.GPU
-	MemTotal   uint64
-	MemAvail   uint64
+	ConfigPath string        `json:"config_path"`
+	Checks     []Check       `json:"checks"`
+	Models     []ModelReport `json:"models"`
+	GPUs       []sysinfo.GPU `json:"gpus"`
+	Budget     gguf.Budget   `json:"budget"`
+	MemTotal   uint64        `json:"mem_total_bytes"`
+	MemAvail   uint64        `json:"mem_available_bytes"`
 }
 
 // Failures returns checks that should make the command exit non-zero.
@@ -172,6 +178,7 @@ func Run(cfg *config.Config, cfgPath string) Report {
 	if len(rep.GPUs) > 0 {
 		primary, _ = snap.Primary()
 	}
+	rep.Budget = budgetFor(cfg, primary)
 
 	for _, id := range cfg.ModelIDs() {
 		m := cfg.Models[id]
@@ -207,7 +214,9 @@ func Run(cfg *config.Config, cfgPath string) Report {
 			if r.HasMeta {
 				r.Est = gguf.EstimateVRAM(r.Meta, r.Size, resolved.Ctx, resolved.GPULayers, resolved.CacheTypeK, resolved.CacheTypeV)
 				r.HasEst = true
-				r.FitNote = fitNote(r.Est, resolved, primary)
+				r.Limiting = r.Est.LimitingTerm()
+				r.Headroom = rep.Budget.Headroom(r.Est)
+				r.FitNote = fitNote(r.Est, resolved, rep.Budget)
 				if r.FitNote != "" {
 					add(LevelWarn, "fit "+id, "%s", r.FitNote)
 				}
@@ -227,9 +236,11 @@ func Run(cfg *config.Config, cfgPath string) Report {
 			if r.HasMeta {
 				pf.Known = true
 				pf.Estimate = gguf.EstimateVRAM(r.Meta, r.Size, pr.Ctx, pr.GPULayers, pr.CacheTypeK, pr.CacheTypeV)
+				pf.Limiting = pf.Estimate.LimitingTerm()
+				pf.Headroom = rep.Budget.Headroom(pf.Estimate)
 				pf.Fits = true
-				if primary.HasVRAM && primary.VRAMTotal > 0 {
-					pf.Fits = pf.Estimate.Total <= primary.VRAMTotal
+				if rep.Budget.Known {
+					pf.Fits = pf.Headroom >= 0
 				}
 				if pr.NCPUMoE > 0 {
 					pf.Note = "MoE CPU offload not included"
@@ -287,16 +298,35 @@ func scanModelDirs(cfg *config.Config, add func(Level, string, string, ...any)) 
 	return counts
 }
 
-func fitNote(est gguf.Estimate, r config.Resolved, gpu sysinfo.GPU) string {
+// budgetFor derives the VRAM available to a new server. The running
+// standalone server's own allocation is excluded so a restart is not charged
+// twice; router child allocations are not identified.
+func budgetFor(cfg *config.Config, gpu sysinfo.GPU) gguf.Budget {
 	if !gpu.HasVRAM || gpu.VRAMTotal == 0 {
+		return gguf.Budget{}
+	}
+	reserve := uint64(0)
+	if cfg.Router.MemoryMarginMiB > 0 {
+		reserve = uint64(cfg.Router.MemoryMarginMiB) << 20
+	}
+	var own uint64
+	var ownKnown bool
+	if inst, err := daemon.NewManager().Status("server"); err == nil && inst.Alive {
+		own, ownKnown = sysinfo.ProcessVRAM(inst.PID)
+	}
+	return gguf.ComputeBudget(gpu.VRAMTotal, gpu.VRAMUsed, reserve, own, ownKnown)
+}
+
+func fitNote(est gguf.Estimate, r config.Resolved, budget gguf.Budget) string {
+	if !budget.Known {
 		return ""
 	}
-	over := int64(est.Total) - int64(gpu.VRAMTotal)
-	if over <= 0 {
+	head := budget.Headroom(est)
+	if head >= 0 {
 		return ""
 	}
-	note := fmt.Sprintf("estimated %s at ctx %d exceeds %s VRAM by %s",
-		humanBytes(est.Total), r.Ctx, humanBytes(gpu.VRAMTotal), humanBytes(uint64(over)))
+	note := fmt.Sprintf("estimated %s at ctx %d exceeds the %s budget by %s",
+		humanBytes(est.Total), r.Ctx, humanBytes(budget.Available), humanBytes(uint64(-head)))
 	if r.NCPUMoE > 0 {
 		note += " (estimate ignores n_cpu_moe)"
 	}
@@ -324,6 +354,23 @@ func humanBytes(n uint64) string {
 	return fmt.Sprintf("%.1f %ciB", float64(n)/float64(div), "KMGTPE"[exp])
 }
 
+// estimateLine formats the estimate decomposition, limiting term and headroom.
+func estimateLine(e gguf.Estimate, headroom int64, limiting string, budgetKnown bool) string {
+	line := fmt.Sprintf("weights %s + kv %s + overhead %s = %s",
+		humanBytes(e.WeightsBytes), humanBytes(e.KVBytes), humanBytes(e.Overhead), humanBytes(e.Total))
+	if limiting != "" {
+		line += " · limit " + limiting
+	}
+	if budgetKnown {
+		if headroom >= 0 {
+			line += " · headroom " + humanBytes(uint64(headroom))
+		} else {
+			line += " · over by " + humanBytes(uint64(-headroom))
+		}
+	}
+	return line
+}
+
 // Print writes a plain-text report. Kept here so the CLI and TUI show the
 // same wording.
 func (r Report) Print() string {
@@ -331,6 +378,17 @@ func (r Report) Print() string {
 	fmt.Fprintf(&b, "config: %s\n", r.ConfigPath)
 	for _, c := range r.Checks {
 		fmt.Fprintf(&b, "  [%s] %-14s %s\n", c.Level, c.Name, c.Detail)
+	}
+	if r.Budget.Known {
+		fmt.Fprintf(&b, "vram: %s total, %s used, %s reserve, %s budget for a new server",
+			humanBytes(r.Budget.Total), humanBytes(r.Budget.Used),
+			humanBytes(r.Budget.Reserve), humanBytes(r.Budget.Available))
+		if r.Budget.OwnKnown && r.Budget.OwnUsed > 0 {
+			fmt.Fprintf(&b, " (server own %s)", humanBytes(r.Budget.OwnUsed))
+		}
+		b.WriteString("\n")
+	} else {
+		b.WriteString("vram: budget unknown (no GPU VRAM detected)\n")
 	}
 	if len(r.Models) > 0 {
 		b.WriteString("\nmodels:\n")
@@ -347,6 +405,9 @@ func (r Report) Print() string {
 				b.WriteString(" (metadata unreadable)")
 			}
 			b.WriteString("\n")
+			if m.HasEst {
+				fmt.Fprintf(&b, "    %s\n", estimateLine(m.Est, m.Headroom, m.Limiting, r.Budget.Known))
+			}
 			for _, p := range m.Presets {
 				mark := "ok"
 				est := humanBytes(p.Estimate.Total)
@@ -356,6 +417,9 @@ func (r Report) Print() string {
 					mark = "over"
 				}
 				fmt.Fprintf(&b, "    %-24s ctx %-6d est %-9s %s", p.ID, p.Ctx, est, mark)
+				if p.Known {
+					b.WriteString(" · " + estimateLine(p.Estimate, p.Headroom, p.Limiting, r.Budget.Known))
+				}
 				if p.Note != "" {
 					b.WriteString(" (" + p.Note + ")")
 				}
