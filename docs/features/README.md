@@ -12,7 +12,7 @@ Status values: `planned`, `in progress`, `shipped`, `blocked`, `dropped`.
 | M1.1 — Override provenance and reset-to-inherited | P0 | M | none | shipped | [m1-01-override-provenance-and-reset-to-inherited.md](m1-01-override-provenance-and-reset-to-inherited.md) |
 | M1.2 — Estimate breakdown and what-if preview | P0 | M | none | shipped | [m1-02-estimate-breakdown-and-what-if-preview.md](m1-02-estimate-breakdown-and-what-if-preview.md) |
 | M1.3 — Observed-vs-estimate capture | P1 | S/M | none | shipped | [m1-03-observed-vs-estimate-capture.md](m1-03-observed-vs-estimate-capture.md) |
-| M1.4 — Effective-config diff | P2 | S | M1.1 | planned | [m1-04-effective-config-diff.md](m1-04-effective-config-diff.md) |
+| M1.4 — Effective-config diff | P2 | S | M1.1 | shipped | [m1-04-effective-config-diff.md](m1-04-effective-config-diff.md) |
 | M2.1 — MoE expert offload modeling | P1 | L | none | planned | [m2-01-moe-expert-offload-modeling.md](m2-01-moe-expert-offload-modeling.md) |
 | M2.2 — Architecture-aware estimate | P1 | L | M2.1 | planned | [m2-02-architecture-aware-estimate.md](m2-02-architecture-aware-estimate.md) |
 | M2.3 — Auto-fit solver | P1 | M/L | M1.2, M2.1, M2.2 | planned | [m2-03-auto-fit-solver.md](m2-03-auto-fit-solver.md) |

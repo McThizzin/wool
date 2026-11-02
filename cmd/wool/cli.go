@@ -44,6 +44,7 @@ Usage:
   wool config path                     print the config path
   wool config init [--force] [PATH]    write a sample config
   wool config explain TARGET [--json]  show each value and where it came from
+  wool config diff TARGET [--against defaults|model] [--json]
   wool version
 
 TARGET is a preset name or a model name. run options:
@@ -174,7 +175,7 @@ func cmdDoctor(cfgPath string, args []string) int {
 
 func cmdConfig(cfgPath string, args []string) int {
 	if len(args) == 0 {
-		fmt.Print("usage: wool config path|init|explain\n")
+		fmt.Print("usage: wool config path|init|explain|diff\n")
 		return 2
 	}
 	switch args[0] {
@@ -183,6 +184,8 @@ func cmdConfig(cfgPath string, args []string) int {
 		return 0
 	case "explain":
 		return cmdConfigExplain(cfgPath, args[1:])
+	case "diff":
+		return cmdConfigDiff(cfgPath, args[1:])
 	case "init":
 		fs := flag.NewFlagSet("config init", flag.ContinueOnError)
 		fs.SetOutput(os.Stderr)
@@ -258,15 +261,7 @@ func cmdConfigExplain(cfgPath string, args []string) int {
 	var r config.Resolved
 	var sources map[string]config.Provenance
 	kind := ""
-	if _, ok := cfg.Presets[target]; ok {
-		kind = "preset"
-		r, sources, err = cfg.ResolveDetailed("", target)
-	} else if _, ok := cfg.Models[target]; ok {
-		kind = "model"
-		r, sources, err = cfg.ResolveDetailed(target, "")
-	} else {
-		err = fmt.Errorf("no preset or model named %q", target)
-	}
+	r, sources, kind, err = resolveNamedTarget(cfg, target)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "wool: %v\n", err)
 		return 1
@@ -277,7 +272,7 @@ func cmdConfigExplain(cfgPath string, args []string) int {
 		p := sources[field]
 		out.Fields = append(out.Fields, explainField{
 			Field:  field,
-			Value:  resolvedFieldValue(r, field),
+			Value:  config.FieldValue(r, field),
 			Source: p.Source,
 			Layer:  p.Layer,
 		})
@@ -295,56 +290,101 @@ func cmdConfigExplain(cfgPath string, args []string) int {
 	return 0
 }
 
-func resolvedFieldValue(r config.Resolved, field string) any {
-	switch field {
-	case "ctx":
-		return r.Ctx
-	case "gpu_layers":
-		return r.GPULayers
-	case "n_cpu_moe":
-		return r.NCPUMoE
-	case "threads":
-		return r.Threads
-	case "threads_batch":
-		return r.ThreadsBatch
-	case "batch_size":
-		return r.BatchSize
-	case "ubatch_size":
-		return r.UBatchSize
-	case "parallel":
-		return r.Parallel
-	case "flash_attn":
-		return r.FlashAttn
-	case "cache_type_k":
-		return r.CacheTypeK
-	case "cache_type_v":
-		return r.CacheTypeV
-	case "jinja":
-		return r.Jinja
-	case "metrics":
-		return r.Metrics
-	case "sampling.temp":
-		return r.Sampling.Temp
-	case "sampling.top_p":
-		return r.Sampling.TopP
-	case "sampling.top_k":
-		return r.Sampling.TopK
-	case "sampling.min_p":
-		return r.Sampling.MinP
-	case "sampling.repeat_penalty":
-		return r.Sampling.RepeatPenalty
-	case "sampling.presence_penalty":
-		return r.Sampling.PresencePenalty
-	case "sampling.frequency_penalty":
-		return r.Sampling.FrequencyPenalty
-	case "sampling.typical_p":
-		return r.Sampling.TypicalP
-	case "sampling.mirostat":
-		return r.Sampling.Mirostat
-	case "sampling.seed":
-		return r.Sampling.Seed
+// resolveNamedTarget resolves a preset or model by name.
+func resolveNamedTarget(cfg *config.Config, target string) (config.Resolved, map[string]config.Provenance, string, error) {
+	if _, ok := cfg.Presets[target]; ok {
+		r, sources, err := cfg.ResolveDetailed("", target)
+		return r, sources, "preset", err
 	}
-	return nil
+	if _, ok := cfg.Models[target]; ok {
+		r, sources, err := cfg.ResolveDetailed(target, "")
+		return r, sources, "model", err
+	}
+	return config.Resolved{}, nil, "", fmt.Errorf("no preset or model named %q", target)
+}
+
+type diffOutput struct {
+	Target  string             `json:"target"`
+	Kind    string             `json:"kind"`
+	Model   string             `json:"model"`
+	Against string             `json:"against"`
+	Fields  []config.DiffField `json:"fields"`
+}
+
+// cmdConfigDiff prints only the resolved launch options that differ from a
+// comparison layer. A preset defaults to its model; a model defaults to the
+// defaults layer. No fields means no output, like a quiet diff.
+func cmdConfigDiff(cfgPath string, args []string) int {
+	asJSON := false
+	against := ""
+	var positional []string
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch {
+		case arg == "--json":
+			asJSON = true
+		case arg == "--against":
+			if i+1 >= len(args) {
+				fmt.Fprintln(os.Stderr, "usage: wool config diff TARGET [--against defaults|model] [--json]")
+				return 2
+			}
+			i++
+			against = args[i]
+		case strings.HasPrefix(arg, "--against="):
+			against = strings.TrimPrefix(arg, "--against=")
+		case strings.HasPrefix(arg, "-"):
+			fmt.Fprintf(os.Stderr, "wool: unknown option %q\n", arg)
+			return 2
+		default:
+			positional = append(positional, arg)
+		}
+	}
+	if len(positional) != 1 {
+		fmt.Fprintln(os.Stderr, "usage: wool config diff TARGET [--against defaults|model] [--json]")
+		return 2
+	}
+	if against != "" && against != config.SourceDefaults && against != config.SourceModel {
+		fmt.Fprintf(os.Stderr, "wool: --against must be defaults or model, not %q\n", against)
+		return 2
+	}
+	target := positional[0]
+	cfg, err := loadConfig(cfgPath)
+	if err != nil {
+		printConfigError(cfgPath, err)
+		return 1
+	}
+	r, _, kind, err := resolveNamedTarget(cfg, target)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "wool: %v\n", err)
+		return 1
+	}
+	presetName := ""
+	if kind == "preset" {
+		presetName = target
+	}
+	res, err := cfg.Diff(r.ModelID, presetName, against)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "wool: %v\n", err)
+		return 1
+	}
+	out := diffOutput{Target: target, Kind: kind, Model: r.ModelID, Against: res.Against, Fields: res.Fields}
+	if asJSON {
+		return writeJSON(out)
+	}
+	if len(res.Fields) == 0 {
+		return 0
+	}
+	fmt.Printf("%s (%s), model %s, against %s\n", out.Target, out.Kind, out.Model, out.Against)
+	w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
+	fmt.Fprintln(w, "FIELD\tTARGET\tAGAINST")
+	for _, f := range res.Fields {
+		fmt.Fprintf(w, "%s\t%v (%s %s)\t%v (%s %s)\n",
+			f.Field,
+			f.Target.Value, f.Target.Source, f.Target.Layer,
+			f.Against.Value, f.Against.Source, f.Against.Layer)
+	}
+	w.Flush()
+	return 0
 }
 
 type listEntry struct {

@@ -729,7 +729,7 @@ func (m *Model) footerView() string {
 	if m.command {
 		hints = "enter run · esc cancel · tab complete"
 	} else {
-		hints = "tab switch · j/k move · enter start · x stop · r router · d doctor · / command · ? help · q quit"
+		hints = "tab switch · j/k move · enter start · x stop · r router · d doctor · D diff · / command · ? help · q quit"
 	}
 	left := st.Muted.Render(" " + hints)
 	size := st.Muted.Render(fmt.Sprintf("%dx%d ", m.width, m.height))

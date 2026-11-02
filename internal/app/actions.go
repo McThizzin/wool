@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"strconv"
 	"strings"
@@ -305,6 +306,43 @@ func (m *Model) runDoctor() tea.Cmd {
 	}
 }
 
+// showConfigDiff opens the diff overlay for the selected target. A preset is
+// compared with its model; a model with the defaults layer.
+func (m *Model) showConfigDiff() {
+	id, kind, ok := m.target()
+	if !ok {
+		m.setToast("nothing selected to diff")
+		return
+	}
+	modelID, preset := "", ""
+	if kind == "preset" {
+		preset = id
+	} else {
+		modelID = id
+	}
+	result, err := m.cfg.Diff(modelID, preset, "")
+	if err != nil {
+		m.setToast("diff: " + err.Error())
+		return
+	}
+	if len(result.Fields) == 0 {
+		m.setToast("config diff: " + id + " matches the " + result.Against + " layer")
+		return
+	}
+	lines := []string{fmt.Sprintf("%s (%s) against %s", id, kind, result.Against), ""}
+	for _, f := range result.Fields {
+		lines = append(lines,
+			f.Field,
+			fmt.Sprintf("  target   %v  (%s %s)", f.Target.Value, f.Target.Source, f.Target.Layer),
+			fmt.Sprintf("  against  %v  (%s %s)", f.Against.Value, f.Against.Source, f.Against.Layer),
+			"",
+		)
+	}
+	m.overlayTitle = "config diff · " + id
+	m.overlayScroll = 0
+	m.overlay = strings.Join(lines, "\n")
+}
+
 func (m *Model) showHelp() {
 	m.overlayTitle = "keys and commands"
 	m.overlayScroll = 0
@@ -321,6 +359,7 @@ func (m *Model) showHelp() {
 		"  l / u                  load / unload the selected router model",
 		"  L                      focus the logs tab (enter toggles target)",
 		"  e                      edit the selected preset/model options",
+		"  D                      show what the selected target changes",
 		"  d                      run doctor",
 		"  t                      next theme",
 		"  ctrl+r                 reload config.toml",

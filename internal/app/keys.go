@@ -113,6 +113,8 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.openEditor()
 	case "d":
 		return m, m.runDoctor()
+	case "D":
+		m.showConfigDiff()
 	case "t":
 		m.cycleTheme(1)
 	case "f":

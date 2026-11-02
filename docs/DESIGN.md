@@ -193,6 +193,14 @@ distinguishable from a built-in value. `config.ResolveDetailed` returns the
 resolved options plus a source map (`built-in`, `defaults`, `model`, `preset`)
 used by the editor and `wool config explain`.
 
+`config.Diff` compares a resolved target with either the defaults layer or the
+target's model and returns only fields whose values differ, in canonical option
+order. A preset defaults to its model, which answers "what does this preset
+change?"; a model defaults to the defaults layer. Each side keeps its value,
+source and exact TOML layer, so sampling keys are compared individually.
+`wool config diff` and the TUI `D` overlay use the same function and print
+nothing when the list is empty.
+
 After merging:
 
 - `threads = 0` becomes `runtime.NumCPU()`;
@@ -435,6 +443,7 @@ budget is cached by GPU total/used, reserve and the running server PID, so the
 | `f` | toggle log follow |
 | `e` | edit the selected preset or model |
 | `d` | run doctor |
+| `D` | show what the selected target changes |
 | `t` | cycle theme |
 | `ctrl+r` | reload config.toml |
 | `/` or `:` | command line |
@@ -598,6 +607,7 @@ wool router [start|stop|status|models|load ID|unload ID|reload|ini]
 wool config path                     print the config path
 wool config init [--force] [PATH]    write a sample config
 wool config explain TARGET [--json]  show each value and its source layer
+wool config diff TARGET [--against defaults|model] [--json]
 wool version
 ```
 
@@ -608,10 +618,10 @@ alive through the 5s/15s settle window.
 
 ## Testing
 
-- `go test ./...` covers config parsing/merging/edits, provenance and key
-  removal, GGUF metadata and estimates, argv/INI generation, router metrics
-  parsing, daemon lifecycle and PID validation, sysinfo parsing, and TUI
-  rendering at multiple sizes.
+- `go test ./...` covers config parsing/merging/edits, provenance, key removal
+  and effective-config diffs, GGUF metadata and estimates, argv/INI generation,
+  router metrics parsing, daemon lifecycle and PID validation, sysinfo parsing,
+  and TUI rendering at multiple sizes.
 - One view test renders every tab at 120x40, 100x30, 80x24, 60x20 and 40x12
   and asserts that no line exceeds the terminal width.
 - Editor tests write to a temporary config and reload it to verify the TOML

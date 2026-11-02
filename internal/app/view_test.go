@@ -85,6 +85,30 @@ func TestFitLineShowsObservation(t *testing.T) {
 	}
 }
 
+func TestConfigDiffOverlay(t *testing.T) {
+	m := testModel(t)
+	m.tab = tabPresets
+	found := false
+	for i, id := range m.presets {
+		if id == "gemma-unsloth-16k" {
+			m.presetSel, found = i, true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("gemma-unsloth-16k missing from presets %v", m.presets)
+	}
+	m.showConfigDiff()
+	if m.overlay == "" {
+		t.Fatal("diff overlay did not open")
+	}
+	for _, want := range []string{"gemma-unsloth-16k", "against model", "ctx", "target   16384", "against  32768"} {
+		if !strings.Contains(m.overlay, want) {
+			t.Fatalf("diff overlay missing %q:\n%s", want, m.overlay)
+		}
+	}
+}
+
 func TestViewAllTabsAndSizes(t *testing.T) {
 	m := testModel(t)
 	for _, size := range [][2]int{{120, 40}, {100, 30}, {80, 24}, {60, 20}, {40, 12}} {
