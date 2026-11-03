@@ -227,7 +227,7 @@ func TestEditorPreviewTracksDraftAndDiscards(t *testing.T) {
 	e.size = 4 << 30
 	e.hasMeta = true
 	e.metaErr = ""
-	e.baseEst = gguf.EstimateVRAM(e.meta, e.size, e.base.Ctx, e.base.GPULayers, e.base.CacheTypeK, e.base.CacheTypeV)
+	e.baseEst = gguf.EstimateVRAM(e.meta, e.size, e.base.Ctx, e.base.GPULayers, e.base.NCPUMoE, e.base.CacheTypeK, e.base.CacheTypeV)
 	e.preview = m.previewFor(e, e.base)
 	if !e.preview.Ready || e.preview.Changed {
 		t.Fatalf("initial preview = %+v", e.preview)
@@ -256,7 +256,7 @@ func TestEditorPreviewTracksDraftAndDiscards(t *testing.T) {
 	}
 	m.width, m.height = 110, 34
 	view := m.View()
-	if !strings.Contains(view, "preview weights") || !strings.Contains(view, "limit") {
+	if !strings.Contains(view, "preview gpu") || !strings.Contains(view, "limit") {
 		t.Fatalf("preview missing from editor:\n%s", view)
 	}
 	after, err := os.ReadFile(m.cfgPath)
@@ -274,16 +274,19 @@ func TestEditorPreviewTracksDraftAndDiscards(t *testing.T) {
 		t.Fatalf("esc did not discard the draft: %+v", e.preview)
 	}
 
-	// n_cpu_moe is not modelled: the draft is marked changed, the arithmetic
-	// is not, and the preview says why.
+	// Without tensor metadata n_cpu_moe cannot be modelled: the draft is
+	// marked changed, the arithmetic is not, and the preview says why.
 	e.sel = editorFieldIndex(t, m, "n_cpu_moe")
 	if _, _ = m.updateEditor(tea.KeyMsg{Type: tea.KeyEnter}); !e.editing {
 		t.Fatal("n_cpu_moe did not enter edit mode")
 	}
 	e.input.SetValue("8")
 	m.refreshPreview()
-	if !e.preview.Changed || e.preview.Delta != 0 || !strings.Contains(e.preview.Note, "not modelled") {
+	if !e.preview.Changed || e.preview.Delta != 0 || !strings.Contains(e.preview.Note, "approximate") {
 		t.Fatalf("n_cpu_moe preview = %+v", e.preview)
+	}
+	if !strings.Contains(e.preview.Note, "n_cpu_moe is not modeled") {
+		t.Fatalf("n_cpu_moe preview missing reason: %+v", e.preview)
 	}
 	if _, _ = m.updateEditor(tea.KeyMsg{Type: tea.KeyEsc}); e.editing {
 		t.Fatal("esc did not leave n_cpu_moe edit mode")

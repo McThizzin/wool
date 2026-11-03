@@ -226,9 +226,11 @@ Logs are tailed from disk with a bounded read, so reattaching is cheap even for 
 
 ## VRAM estimate
 
-`wool` estimates VRAM from the GGUF key/value block: weights from the file size and offloaded layer fraction, KV cache from context, attention heads, cache type, and full-attention layer schedule, plus a fixed overhead for compute buffers and allocator slack.
+`wool` estimates VRAM from the GGUF key/value block and tensor-info table: each tensor is sized from its type and dimensions, then weights are split into GPU and CPU terms according to `gpu_layers` and `n_cpu_moe`. The KV cache comes from context, attention heads, cache type, and the full-attention layer schedule, plus a fixed overhead for compute buffers and allocator slack.
 
-Hybrid models such as Qwen3.5/Qwen3-Next only keep KV for every `full_attention_interval`-th layer; `wool` models that instead of charging KV for every block. The estimate is deliberately conservative and does not include MoE CPU offload, unused MTP tensors, or speculative decoding buffers, so it is a fit warning rather than an exact measurement.
+For MoE models, `n_cpu_moe = N` keeps the routed-expert tensors (`ffn_*_exps`) of the first `N` layers on the CPU; routers and shared experts stay with their layer. If the tensor table is missing, a quantisation type is unknown, or expert tensors cannot be identified, `wool` falls back to the file-size fraction and marks the estimate approximate. Doctor and the editor preview explain why.
+
+Hybrid models such as Qwen3.5/Qwen3-Next only keep KV for every `full_attention_interval`-th layer; `wool` models that instead of charging KV for every block. The estimate is deliberately conservative and still omits unused MTP tensors and speculative decoding buffers, so it is a fit warning rather than an exact measurement.
 
 ## Project layout
 
@@ -260,7 +262,7 @@ go vet ./...
 go test -count=1 ./...
 ```
 
-Tests cover config parsing/merging/editing, effective-config diffs, GGUF metadata and hybrid KV estimation, measurement storage and capture, argv and INI generation, router metrics, daemon lifecycle and PID validation, sysinfo parsing, themes, and TUI rendering at multiple terminal sizes.
+Tests cover config parsing/merging/editing, effective-config diffs, GGUF metadata and tensor parsing, hybrid KV and MoE expert-offload estimation, measurement storage and capture, argv and INI generation, router metrics, daemon lifecycle and PID validation, sysinfo parsing, themes, and TUI rendering at multiple terminal sizes.
 
 ## Limitations
 
@@ -268,7 +270,7 @@ Tests cover config parsing/merging/editing, effective-config diffs, GGUF metadat
 - One standalone server and one router are managed per state directory.
 - The editor can reset launch-option overrides, but not `model`, `path`, `alias` or `extra` keys.
 - Standalone servers are not automatically restarted; router-managed models are supervised by `llama-server` itself.
-- VRAM estimates remain conservative for MoE CPU offload and speculative decoding.
+- VRAM estimates fall back to a file-size approximation, and say so, when tensor metadata or a quantisation type is unsupported. Speculative decoding buffers are not modelled.
 - Observations are system-wide VRAM deltas; background GPU work makes them noisy. They are never presented as exact usage.
 
 See [`docs/DESIGN.md`](docs/DESIGN.md) for the full design, lifecycle, and config reference, and [`docs/roadmap.md`](docs/roadmap.md) for what is planned and in what order.

@@ -278,11 +278,19 @@ func (m *Model) fitLine(w int) []string {
 	return lines
 }
 
-// fitBreakdown renders the estimate as weights + KV + overhead = total.
+// fitBreakdown renders the VRAM estimate as gpu weights + KV + overhead = total,
+// with the CPU-resident weight term and the approximate flag alongside.
 func fitBreakdown(e gguf.Estimate) string {
-	return fmt.Sprintf("weights %s + kv %s + overhead %s = %s",
-		ui.HumanBytes(e.WeightsBytes), ui.HumanBytes(e.KVBytes),
+	s := fmt.Sprintf("gpu %s + kv %s + overhead %s = %s",
+		ui.HumanBytes(e.GPUWeights), ui.HumanBytes(e.KVBytes),
 		ui.HumanBytes(e.Overhead), ui.HumanBytes(e.Total))
+	if e.CPUWeights > 0 {
+		s += " · cpu " + ui.HumanBytes(e.CPUWeights)
+	}
+	if e.Approximate {
+		s += " · approx"
+	}
+	return s
 }
 
 // observationText compares the live estimate with the newest measurement.
@@ -310,7 +318,7 @@ func (m *Model) fitBar(e gguf.Estimate, b gguf.Budget, width int) string {
 	cells := func(v uint64) int {
 		return int(float64(v) / float64(scale) * float64(width))
 	}
-	wc, kc, oc := cells(e.WeightsBytes), cells(e.KVBytes), cells(e.Overhead)
+	wc, kc, oc := cells(e.GPUWeights), cells(e.KVBytes), cells(e.Overhead)
 	for wc+kc+oc > width {
 		switch {
 		case oc > 0:

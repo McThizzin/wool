@@ -120,7 +120,7 @@ func (m *Model) openEditor() {
 		e.metaErr = err.Error()
 	} else {
 		e.meta, e.size, e.hasMeta = meta.Meta, meta.Size, true
-		e.baseEst = gguf.EstimateVRAM(meta.Meta, meta.Size, r.Ctx, r.GPULayers, r.CacheTypeK, r.CacheTypeV)
+		e.baseEst = gguf.EstimateVRAM(meta.Meta, meta.Size, r.Ctx, r.GPULayers, r.NCPUMoE, r.CacheTypeK, r.CacheTypeV)
 	}
 	e.preview = m.previewFor(e, r)
 	m.editor = e
@@ -133,7 +133,7 @@ func (m *Model) previewFor(e *editor, draft config.Resolved) editorPreview {
 		p.Err = e.metaErr
 		return p
 	}
-	p.Est = gguf.EstimateVRAM(e.meta, e.size, draft.Ctx, draft.GPULayers, draft.CacheTypeK, draft.CacheTypeV)
+	p.Est = gguf.EstimateVRAM(e.meta, e.size, draft.Ctx, draft.GPULayers, draft.NCPUMoE, draft.CacheTypeK, draft.CacheTypeV)
 	p.Ready = true
 	p.Delta = int64(p.Est.Total) - int64(e.baseEst.Total)
 	p.Changed = p.Delta != 0 ||
@@ -142,10 +142,8 @@ func (m *Model) previewFor(e *editor, draft config.Resolved) editorPreview {
 		draft.NCPUMoE != e.base.NCPUMoE ||
 		draft.CacheTypeK != e.base.CacheTypeK ||
 		draft.CacheTypeV != e.base.CacheTypeV
-	if draft.NCPUMoE != e.base.NCPUMoE {
-		p.Note = "n_cpu_moe is not modelled yet; the GPU estimate is unchanged"
-	} else if draft.NCPUMoE > 0 {
-		p.Note = "n_cpu_moe is not modelled yet; the estimate may be conservative"
+	if len(p.Est.Reasons) > 0 {
+		p.Note = "approximate: " + strings.Join(p.Est.Reasons, "; ")
 	}
 	return p
 }

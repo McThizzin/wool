@@ -11,9 +11,9 @@ import (
 
 func TestEstimateLine(t *testing.T) {
 	const mib = 1 << 20
-	e := gguf.Estimate{WeightsBytes: 2048 * mib, KVBytes: 512 * mib, Overhead: 512 * mib, Total: 3072 * mib}
+	e := gguf.Estimate{GPUWeights: 2048 * mib, CPUWeights: 256 * mib, KVBytes: 512 * mib, Overhead: 512 * mib, Total: 3072 * mib}
 	line := estimateLine(e, 1024*mib, "weights", true)
-	for _, want := range []string{"weights 2.0 GiB", "kv 512.0 MiB", "overhead 512.0 MiB", "= 3.0 GiB", "limit weights", "headroom 1.0 GiB"} {
+	for _, want := range []string{"gpu weights 2.0 GiB", "cpu weights 256.0 MiB", "kv 512.0 MiB", "overhead 512.0 MiB", "= 3.0 GiB", "limit weights", "headroom 1.0 GiB"} {
 		if !strings.Contains(line, want) {
 			t.Fatalf("estimate line missing %q: %q", want, line)
 		}
@@ -35,8 +35,9 @@ func TestFitNoteUsesBudget(t *testing.T) {
 		t.Fatalf("fitting estimate should not warn: %q", note)
 	}
 	est.Total = 8 << 30
+	est.Approximate = true
 	note := fitNote(est, config.Resolved{Ctx: 4096, NCPUMoE: 8}, budget)
-	for _, want := range []string{"exceeds the", "budget by", "n_cpu_moe"} {
+	for _, want := range []string{"exceeds the", "budget by", "approximate"} {
 		if !strings.Contains(note, want) {
 			t.Fatalf("note missing %q: %q", want, note)
 		}
@@ -56,7 +57,7 @@ func TestObservationLineUnknownBaseline(t *testing.T) {
 func TestReportPrintShowsBreakdownAndBudget(t *testing.T) {
 	const mib = 1 << 20
 	budget := gguf.ComputeBudget(8<<30, 2<<30, 512<<20, 0, false)
-	est := gguf.Estimate{WeightsBytes: 4096 * mib, KVBytes: 1024 * mib, Overhead: 512 * mib, Total: 5632 * mib}
+	est := gguf.Estimate{GPUWeights: 4096 * mib, CPUWeights: 1024 * mib, KVBytes: 1024 * mib, Overhead: 512 * mib, Total: 5632 * mib}
 	rep := Report{
 		ConfigPath: "/tmp/config.toml",
 		Budget:     budget,
@@ -68,8 +69,8 @@ func TestReportPrintShowsBreakdownAndBudget(t *testing.T) {
 			Observed: &measure.Summary{ObservedBytes: 3 << 30, BaselineKnown: true, Count: 1},
 			Presets: []PresetFit{{
 				ID: "p", Ctx: 65536, Known: true,
-				Estimate: gguf.Estimate{WeightsBytes: 4096 * mib, KVBytes: 6144 * mib, Overhead: 512 * mib, Total: 10752 * mib},
-				Fits:     false, Note: "MoE CPU offload not included",
+				Estimate: gguf.Estimate{GPUWeights: 4096 * mib, KVBytes: 6144 * mib, Overhead: 512 * mib, Total: 10752 * mib},
+				Fits:     false, Note: "estimate is approximate",
 				Observed: &measure.Summary{ObservedBytes: 9 << 30, BaselineKnown: true, Count: 2},
 			}},
 		}},
@@ -80,10 +81,11 @@ func TestReportPrintShowsBreakdownAndBudget(t *testing.T) {
 	for _, want := range []string{
 		"vram: 8.0 GiB total, 2.0 GiB used, 512.0 MiB reserve",
 		"weights 4.0 GiB + kv 1.0 GiB + overhead 512.0 MiB = 5.5 GiB",
+		"cpu weights 1.0 GiB",
 		"limit weights",
 		"headroom",
 		"over",
-		"MoE CPU offload not included",
+		"estimate is approximate",
 		"estimate 5.5 GiB · observed 3.0 GiB (n=1)",
 		"observed 9.0 GiB (n=2)",
 	} {

@@ -251,7 +251,7 @@ func NewRecord(i RunInfo) Record {
 	}
 	if i.MetaOK {
 		r.Architecture = i.Meta.Architecture
-		est := gguf.EstimateVRAM(i.Meta, i.FileSize, i.Ctx, i.GPULayers, i.CacheTypeK, i.CacheTypeV)
+		est := gguf.EstimateVRAM(i.Meta, i.FileSize, i.Ctx, i.GPULayers, i.NCPUMoE, i.CacheTypeK, i.CacheTypeV)
 		r.EstimateBytes = est.Total
 		r.EstimateKnown = est.Total > 0
 	}

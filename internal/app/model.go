@@ -598,7 +598,7 @@ func (m *Model) computeFit(r config.Resolved) fitInfo {
 		fi.Err = err.Error()
 		return fi
 	}
-	fi.Est = gguf.EstimateVRAM(meta.Meta, meta.Size, r.Ctx, r.GPULayers, r.CacheTypeK, r.CacheTypeV)
+	fi.Est = gguf.EstimateVRAM(meta.Meta, meta.Size, r.Ctx, r.GPULayers, r.NCPUMoE, r.CacheTypeK, r.CacheTypeV)
 	fi.Ready = true
 	if m.meas != nil {
 		shape := measure.Shape{

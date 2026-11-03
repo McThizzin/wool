@@ -12,6 +12,7 @@ import (
 	"io"
 	"math"
 	"os"
+	"strconv"
 	"strings"
 )
 
@@ -31,6 +32,168 @@ type Meta struct {
 	// friends): only every Nth layer keeps a KV cache, the rest are
 	// recurrent and use constant-size state.
 	FullAttentionInterval int `json:"full_attention_interval,omitempty"`
+	// ExpertCount is the number of routed experts per layer as declared by
+	// the architecture. Zero means the model is not a mixture of experts.
+	ExpertCount int `json:"expert_count,omitempty"`
+
+	// Tensors is the parsed tensor-info table. It is intentionally omitted
+	// from JSON: the table can be large and the estimate already exposes the
+	// aggregated byte terms.
+	Tensors []TensorInfo `json:"-"`
+	// UnmodeledTensors counts tensors whose type or shape wool cannot size.
+	UnmodeledTensors int `json:"unmodeled_tensors,omitempty"`
+	// Approximate reports that some metadata or tensor data was not modelled.
+	Approximate        bool     `json:"approximate,omitempty"`
+	ApproximateReasons []string `json:"approximate_reasons,omitempty"`
+}
+
+// TensorInfo describes one GGUF tensor without reading its data.
+type TensorInfo struct {
+	Name     string   `json:"name"`
+	Dims     []uint64 `json:"dims"`
+	Type     uint32   `json:"type"`
+	TypeName string   `json:"type_name"`
+	Offset   uint64   `json:"offset"`
+	Bytes    uint64   `json:"bytes"`
+}
+
+type ggmlType struct {
+	name  string
+	block uint64 // elements per quantisation block
+	size  uint64 // bytes per block
+}
+
+// ggmlTypes follows the ggml_type enum. Removed types are deliberately absent:
+// a file that uses one is reported as approximate rather than guessed at.
+var ggmlTypes = map[uint32]ggmlType{
+	0:  {"f32", 1, 4},
+	1:  {"f16", 1, 2},
+	2:  {"q4_0", 32, 18},
+	3:  {"q4_1", 32, 20},
+	6:  {"q5_0", 32, 22},
+	7:  {"q5_1", 32, 24},
+	8:  {"q8_0", 32, 34},
+	9:  {"q8_1", 32, 36},
+	10: {"q2_K", 256, 84},
+	11: {"q3_K", 256, 110},
+	12: {"q4_K", 256, 144},
+	13: {"q5_K", 256, 176},
+	14: {"q6_K", 256, 210},
+	15: {"q8_K", 256, 292},
+	16: {"iq2_xxs", 256, 66},
+	17: {"iq2_xs", 256, 74},
+	18: {"iq3_xxs", 256, 98},
+	19: {"iq1_s", 256, 50},
+	20: {"iq4_nl", 32, 18},
+	21: {"iq3_s", 256, 110},
+	22: {"iq2_s", 256, 82},
+	23: {"iq4_xs", 256, 136},
+	24: {"i8", 1, 1},
+	25: {"i16", 1, 2},
+	26: {"i32", 1, 4},
+	27: {"i64", 1, 8},
+	28: {"f64", 1, 8},
+	29: {"iq1_m", 256, 56},
+	30: {"bf16", 1, 2},
+	34: {"tq1_0", 256, 54},
+	35: {"tq2_0", 256, 66},
+	39: {"mxfp4", 32, 17},
+	40: {"nvfp4", 64, 36},
+	41: {"q1_0", 128, 18},
+	42: {"q2_0", 64, 18},
+	43: {"f8_e4m3", 1, 1},
+}
+
+// TypeName returns the ggml type name, or "unknown" for an unsupported type.
+func TypeName(t uint32) string {
+	if info, ok := ggmlTypes[t]; ok {
+		return info.name
+	}
+	return "unknown"
+}
+
+// TensorBytes returns the stored size of a tensor with the given dimensions
+// and ggml type. Rows are quantised independently, so the row width is rounded
+// up to a whole number of blocks before multiplying by the row count.
+func TensorBytes(t uint32, dims []uint64) (uint64, bool) {
+	info, ok := ggmlTypes[t]
+	if !ok || info.block == 0 {
+		return 0, false
+	}
+	if len(dims) == 0 {
+		return 0, true
+	}
+	const max = ^uint64(0)
+	rows := uint64(1)
+	for _, d := range dims[1:] {
+		if d != 0 && rows > max/d {
+			return 0, false
+		}
+		rows *= d
+	}
+	row := dims[0]
+	if row != 0 && info.block-1 > max-row {
+		return 0, false
+	}
+	blocks := (row + info.block - 1) / info.block
+	if blocks != 0 && rows > max/blocks {
+		return 0, false
+	}
+	rows *= blocks
+	if rows != 0 && info.size > max/rows {
+		return 0, false
+	}
+	return rows * info.size, true
+}
+
+// blockLayer parses the transformer-block index from a tensor name such as
+// blk.12.ffn_gate_exps.weight.
+func blockLayer(name string) (int, bool) {
+	rest, ok := strings.CutPrefix(name, "blk.")
+	if !ok {
+		return 0, false
+	}
+	dot := strings.IndexByte(rest, '.')
+	if dot <= 0 {
+		return 0, false
+	}
+	layer, err := strconv.Atoi(rest[:dot])
+	if err != nil || layer < 0 {
+		return 0, false
+	}
+	return layer, true
+}
+
+// isExpertTensor matches routed-expert tensors. llama.cpp spells them
+// ffn_{gate,up,down}_exps, and fused variants keep the same _exps suffix.
+// Shared-expert (_shexp) and router (ffn_gate_inp) tensors are not affected by
+// n_cpu_moe, so they stay with the rest of the layer.
+func isExpertTensor(name string) bool {
+	layer, ok := blockLayer(name)
+	if !ok || layer < 0 {
+		return false
+	}
+	return strings.Contains(name, ".ffn_") && strings.Contains(name, "_exps.")
+}
+
+// TensorBytes returns the total size of the parsed tensor table.
+func (m Meta) TensorBytes() uint64 {
+	var total uint64
+	for _, t := range m.Tensors {
+		total += t.Bytes
+	}
+	return total
+}
+
+// ExpertBytes returns the total size of routed-expert tensors.
+func (m Meta) ExpertBytes() uint64 {
+	var total uint64
+	for _, t := range m.Tensors {
+		if isExpertTensor(t.Name) {
+			total += t.Bytes
+		}
+	}
+	return total
 }
 
 type valueKind int
@@ -263,8 +426,12 @@ func readMeta(rd io.Reader) (Meta, error) {
 	if version < 2 || version > 3 {
 		return Meta{}, fmt.Errorf("unsupported GGUF version %d", version)
 	}
-	if _, err := r.u64(); err != nil { // tensor count
+	tensorCount, err := r.u64()
+	if err != nil {
 		return Meta{}, err
+	}
+	if tensorCount > 1<<20 {
+		return Meta{}, fmt.Errorf("unreasonable tensor count %d", tensorCount)
 	}
 	kvCount, err := r.u64()
 	if err != nil {
@@ -295,6 +462,11 @@ func readMeta(rd io.Reader) (Meta, error) {
 		}
 	}
 
+	tensors, unmodeled, reasons, err := readTensors(r, tensorCount)
+	if err != nil {
+		return Meta{}, err
+	}
+
 	arch := raw["general.architecture"].s
 	if arch == "" {
 		return Meta{}, errors.New("missing general.architecture")
@@ -312,6 +484,11 @@ func readMeta(rd io.Reader) (Meta, error) {
 		ValueLength:           asInt(getOr(get, "attention.value_length")),
 		CtxTrain:              asInt(getOr(get, "context_length")),
 		FullAttentionInterval: asInt(getOr(get, "full_attention_interval")),
+		ExpertCount:           asInt(getOr(get, "expert_count")),
+		Tensors:               tensors,
+		UnmodeledTensors:      unmodeled,
+		Approximate:           unmodeled > 0,
+		ApproximateReasons:    reasons,
 	}
 	if v, ok := get("attention.head_count_kv"); ok {
 		if v.kind == kindUintArray {
@@ -326,6 +503,60 @@ func readMeta(rd io.Reader) (Meta, error) {
 		return Meta{}, fmt.Errorf("%s: incomplete attention metadata", arch)
 	}
 	return meta, nil
+}
+
+// readTensors parses the tensor-info table. It never reads tensor data, only
+// the fixed-size descriptors that follow the key/value block.
+func readTensors(r *reader, count uint64) ([]TensorInfo, int, []string, error) {
+	tensors := make([]TensorInfo, 0, min(int(count), 4096))
+	var unmodeled int
+	var reasons []string
+	seen := map[string]bool{}
+	for i := uint64(0); i < count; i++ {
+		name, err := r.str()
+		if err != nil {
+			return nil, 0, nil, fmt.Errorf("tensor %d: %w", i, err)
+		}
+		nDims, err := r.u32()
+		if err != nil {
+			return nil, 0, nil, fmt.Errorf("tensor %s: %w", name, err)
+		}
+		if nDims == 0 || nDims > 8 {
+			return nil, 0, nil, fmt.Errorf("tensor %s: unreasonable dimension count %d", name, nDims)
+		}
+		dims := make([]uint64, nDims)
+		for j := range dims {
+			if dims[j], err = r.u64(); err != nil {
+				return nil, 0, nil, fmt.Errorf("tensor %s: %w", name, err)
+			}
+		}
+		typ, err := r.u32()
+		if err != nil {
+			return nil, 0, nil, fmt.Errorf("tensor %s: %w", name, err)
+		}
+		offset, err := r.u64()
+		if err != nil {
+			return nil, 0, nil, fmt.Errorf("tensor %s: %w", name, err)
+		}
+		bytes, ok := TensorBytes(typ, dims)
+		if !ok {
+			unmodeled++
+			typeName := TypeName(typ)
+			if !seen[typeName] {
+				seen[typeName] = true
+				reasons = append(reasons, "unsupported tensor type "+typeName)
+			}
+		}
+		tensors = append(tensors, TensorInfo{
+			Name:     name,
+			Dims:     dims,
+			Type:     typ,
+			TypeName: TypeName(typ),
+			Offset:   offset,
+			Bytes:    bytes,
+		})
+	}
+	return tensors, unmodeled, reasons, nil
 }
 
 func getOr(get func(string) (value, bool), suffix string) value {
@@ -345,7 +576,8 @@ func wantedKey(key string) bool {
 		strings.HasSuffix(key, ".attention.key_length"),
 		strings.HasSuffix(key, ".attention.value_length"),
 		strings.HasSuffix(key, ".context_length"),
-		strings.HasSuffix(key, ".full_attention_interval"):
+		strings.HasSuffix(key, ".full_attention_interval"),
+		strings.HasSuffix(key, ".expert_count"):
 		return true
 	}
 	return false
@@ -448,20 +680,26 @@ func BytesPerElement(t string) float64 {
 	}
 }
 
-// Estimate is a conservative VRAM estimate.
+// Estimate is a conservative VRAM estimate. GPUWeights and KVBytes are
+// charged to VRAM; CPUWeights is the part of the model that stays in system
+// memory (unoffloaded layers and expert tensors moved by n_cpu_moe). Total is
+// the VRAM term, so CPUWeights is deliberately not part of it.
 type Estimate struct {
-	FileBytes    uint64 `json:"file_bytes"`
-	WeightsBytes uint64 `json:"weights_bytes"`
-	KVBytes      uint64 `json:"kv_bytes"`
-	Overhead     uint64 `json:"overhead_bytes"`
-	Total        uint64 `json:"total_bytes"`
+	FileBytes   uint64   `json:"file_bytes"`
+	GPUWeights  uint64   `json:"gpu_weights_bytes"`
+	CPUWeights  uint64   `json:"cpu_weights_bytes"`
+	KVBytes     uint64   `json:"kv_bytes"`
+	Overhead    uint64   `json:"overhead_bytes"`
+	Total       uint64   `json:"total_bytes"`
+	Approximate bool     `json:"approximate,omitempty"`
+	Reasons     []string `json:"approximate_reasons,omitempty"`
 }
 
-// LimitingTerm names the largest component of the estimate. Ties prefer
+// LimitingTerm names the largest VRAM component of the estimate. Ties prefer
 // weights because they dominate most dense models.
 func (e Estimate) LimitingTerm() string {
 	switch {
-	case e.WeightsBytes >= e.KVBytes && e.WeightsBytes >= e.Overhead:
+	case e.GPUWeights >= e.KVBytes && e.GPUWeights >= e.Overhead:
 		return "weights"
 	case e.KVBytes >= e.Overhead:
 		return "kv"
@@ -527,24 +765,144 @@ func (b Budget) Headroom(e Estimate) int64 {
 
 // EstimateVRAM estimates GPU memory for the given context. gpuLayers is the
 // number of transformer layers offloaded; values >= BlockCount mean all and
-// zero means no layers. Overhead covers compute buffers and allocator slack,
-// not the KV cache.
-func EstimateVRAM(m Meta, fileBytes uint64, ctx, gpuLayers int, cacheK, cacheV string) Estimate {
-	if gpuLayers > m.BlockCount {
-		gpuLayers = m.BlockCount
+// zero means no layers. nCPUMoE is llama.cpp's --n-cpu-moe: the routed-expert
+// tensors of the first N layers stay on the CPU. Overhead covers compute
+// buffers and allocator slack, not the KV cache.
+func EstimateVRAM(m Meta, fileBytes uint64, ctx, gpuLayers, nCPUMoE int, cacheK, cacheV string) Estimate {
+	if m.BlockCount > 0 {
+		if gpuLayers > m.BlockCount {
+			gpuLayers = m.BlockCount
+		}
+		if gpuLayers < 0 {
+			gpuLayers = m.BlockCount
+		}
 	}
-	if gpuLayers < 0 {
-		gpuLayers = m.BlockCount
+	if nCPUMoE < 0 {
+		nCPUMoE = 0
 	}
-	frac := float64(gpuLayers) / float64(m.BlockCount)
-	weights := uint64(float64(fileBytes) * frac)
-	kv := m.KVBytes(ctx, cacheK, cacheV)
-	const overhead = uint64(512 << 20)
-	return Estimate{
-		FileBytes:    fileBytes,
-		WeightsBytes: weights,
-		KVBytes:      kv,
-		Overhead:     overhead,
-		Total:        weights + kv + overhead,
+	if nCPUMoE > m.BlockCount {
+		nCPUMoE = m.BlockCount
 	}
+
+	est := Estimate{
+		FileBytes: fileBytes,
+		KVBytes:   m.KVBytes(ctx, cacheK, cacheV),
+		Overhead:  512 << 20,
+	}
+
+	gpu, cpu, experts, ok := m.placeWeights(fileBytes, gpuLayers, nCPUMoE)
+	if ok {
+		est.GPUWeights, est.CPUWeights = gpu, cpu
+	} else {
+		frac := 0.0
+		if m.BlockCount > 0 {
+			frac = float64(gpuLayers) / float64(m.BlockCount)
+		}
+		est.GPUWeights = uint64(float64(fileBytes) * frac)
+		est.CPUWeights = fileBytes - est.GPUWeights
+		est.Approximate = true
+		switch {
+		case len(m.Tensors) == 0:
+			est.Reasons = append(est.Reasons, "tensor metadata unavailable; using file-size approximation")
+		case m.UnmodeledTensors > 0:
+			est.Reasons = append(est.Reasons, "some tensor types are not modelled; using file-size approximation")
+		case m.ExpertCount > 0:
+			est.Reasons = append(est.Reasons, "MoE detected but expert tensors not modeled")
+		default:
+			est.Reasons = append(est.Reasons, "tensor layout not modelled; using file-size approximation")
+		}
+	}
+
+	if m.Approximate {
+		est.Approximate = true
+		est.Reasons = appendUnique(est.Reasons, m.ApproximateReasons...)
+	}
+	if nCPUMoE > 0 && experts == 0 {
+		est.Approximate = true
+		est.Reasons = appendUnique(est.Reasons, "n_cpu_moe is not modeled for this model")
+	}
+	est.Total = est.GPUWeights + est.KVBytes + est.Overhead
+	return est
+}
+
+// placeWeights splits the model into GPU and CPU weight terms using the parsed
+// tensor table. It reports false when the table cannot be trusted, in which
+// case the caller falls back to the file-size fraction.
+func (m Meta) placeWeights(fileBytes uint64, gpuLayers, nCPUMoE int) (gpu, cpu, experts uint64, ok bool) {
+	if len(m.Tensors) == 0 || m.BlockCount <= 0 || m.UnmodeledTensors > 0 {
+		return 0, 0, 0, false
+	}
+	block := make([]uint64, m.BlockCount)
+	expert := make([]uint64, m.BlockCount)
+	var nonBlock uint64
+	var accounted uint64
+	for _, t := range m.Tensors {
+		accounted += t.Bytes
+		if layer, isBlock := blockLayer(t.Name); isBlock && layer < m.BlockCount {
+			block[layer] += t.Bytes
+			if isExpertTensor(t.Name) {
+				expert[layer] += t.Bytes
+			}
+		} else {
+			nonBlock += t.Bytes
+		}
+	}
+	for _, n := range expert {
+		experts += n
+	}
+	// A file always contains at least its tensor data. A larger computed total
+	// means the type table or dimensions are wrong, so do not trust it.
+	if accounted == 0 || (fileBytes > 0 && accounted > fileBytes) {
+		return 0, 0, 0, false
+	}
+	// An architecture that declares experts but has no routed-expert tensors
+	// is outside the naming table. Fall back rather than silently ignoring
+	// n_cpu_moe.
+	if m.ExpertCount > 0 && experts == 0 {
+		return 0, 0, 0, false
+	}
+
+	gpuStart := m.BlockCount - gpuLayers
+	if gpuLayers > 0 {
+		// Non-block tensors (embeddings, output, norms) are assumed to follow
+		// the layer offload. M2.2 refines this per tensor.
+		gpu += nonBlock
+	}
+	// Metadata and alignment padding are mapped from the file and stay in RAM.
+	if fileBytes > accounted {
+		cpu += fileBytes - accounted
+	}
+	for i := 0; i < m.BlockCount; i++ {
+		bytes := block[i]
+		if i < gpuStart {
+			cpu += bytes
+			continue
+		}
+		moved := uint64(0)
+		if i < nCPUMoE {
+			moved = expert[i]
+			if moved > bytes {
+				moved = bytes
+			}
+		}
+		gpu += bytes - moved
+		cpu += moved
+	}
+	return gpu, cpu, experts, true
+}
+
+func appendUnique(dst []string, values ...string) []string {
+	for _, v := range values {
+		found := false
+		for _, existing := range dst {
+			if existing == v {
+				found = true
+				break
+			}
+		}
+		if !found {
+			dst = append(dst, v)
+		}
+	}
+	return dst
 }

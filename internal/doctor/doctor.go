@@ -216,7 +216,7 @@ func Run(cfg *config.Config, cfgPath string) Report {
 		} else {
 			r.Ctx = resolved.Ctx
 			if r.HasMeta {
-				r.Est = gguf.EstimateVRAM(r.Meta, r.Size, resolved.Ctx, resolved.GPULayers, resolved.CacheTypeK, resolved.CacheTypeV)
+				r.Est = gguf.EstimateVRAM(r.Meta, r.Size, resolved.Ctx, resolved.GPULayers, resolved.NCPUMoE, resolved.CacheTypeK, resolved.CacheTypeV)
 				r.HasEst = true
 				r.Limiting = r.Est.LimitingTerm()
 				r.Headroom = rep.Budget.Headroom(r.Est)
@@ -261,15 +261,12 @@ func Run(cfg *config.Config, cfgPath string) Report {
 			}
 			if r.HasMeta {
 				pf.Known = true
-				pf.Estimate = gguf.EstimateVRAM(r.Meta, r.Size, pr.Ctx, pr.GPULayers, pr.CacheTypeK, pr.CacheTypeV)
+				pf.Estimate = gguf.EstimateVRAM(r.Meta, r.Size, pr.Ctx, pr.GPULayers, pr.NCPUMoE, pr.CacheTypeK, pr.CacheTypeV)
 				pf.Limiting = pf.Estimate.LimitingTerm()
 				pf.Headroom = rep.Budget.Headroom(pf.Estimate)
 				pf.Fits = true
 				if rep.Budget.Known {
 					pf.Fits = pf.Headroom >= 0
-				}
-				if pr.NCPUMoE > 0 {
-					pf.Note = "MoE CPU offload not included"
 				}
 			}
 			r.Presets = append(r.Presets, pf)
@@ -353,8 +350,8 @@ func fitNote(est gguf.Estimate, r config.Resolved, budget gguf.Budget) string {
 	}
 	note := fmt.Sprintf("estimated %s at ctx %d exceeds the %s budget by %s",
 		humanBytes(est.Total), r.Ctx, humanBytes(budget.Available), humanBytes(uint64(-head)))
-	if r.NCPUMoE > 0 {
-		note += " (estimate ignores n_cpu_moe)"
+	if est.Approximate {
+		note += " (estimate is approximate)"
 	}
 	return note
 }
@@ -382,8 +379,17 @@ func humanBytes(n uint64) string {
 
 // estimateLine formats the estimate decomposition, limiting term and headroom.
 func estimateLine(e gguf.Estimate, headroom int64, limiting string, budgetKnown bool) string {
-	line := fmt.Sprintf("weights %s + kv %s + overhead %s = %s",
-		humanBytes(e.WeightsBytes), humanBytes(e.KVBytes), humanBytes(e.Overhead), humanBytes(e.Total))
+	line := fmt.Sprintf("gpu weights %s + kv %s + overhead %s = %s",
+		humanBytes(e.GPUWeights), humanBytes(e.KVBytes), humanBytes(e.Overhead), humanBytes(e.Total))
+	if e.CPUWeights > 0 {
+		line += " · cpu weights " + humanBytes(e.CPUWeights)
+	}
+	if e.Approximate {
+		line += " · approximate"
+		if len(e.Reasons) > 0 {
+			line += ": " + strings.Join(e.Reasons, "; ")
+		}
+	}
 	if limiting != "" {
 		line += " · limit " + limiting
 	}

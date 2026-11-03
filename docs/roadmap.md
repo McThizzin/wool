@@ -74,7 +74,7 @@ Shipped foundation:
 | --- | --- |
 | Launch | Detached single-server and router modes, health wait, auto-port, PID/start-tick validation |
 | Config | TOML schema, layered inheritance, validation, provenance/explain, comment-preserving edits and override reset |
-| Fit | Dense and hybrid-attention VRAM estimate, GGUF metadata reader, AMD telemetry |
+| Fit | Dense, hybrid-attention and MoE-expert VRAM estimate, GGUF metadata and tensor reader, AMD telemetry |
 | Observe | Dashboard, hardware sparklines, log tail, router `/metrics` and `/slots` |
 | Operate | Start/stop/restart, stale-state cleanup, log tailing |
 | CLI | `run`, `stop`, `status`, `logs`, `router`, `list`, `doctor`, `config`, JSON for some commands |
@@ -84,7 +84,7 @@ Known gaps that shape the sequence:
 | Gap | Consequence |
 | --- | --- |
 | The estimate is never checked against observed VRAM | Users cannot tell whether to trust it |
-| `n_cpu_moe` is not modeled | MoE models on 8 GB cards look unusable when they may fit |
+| Tensor placement is coarse and unknown layouts fall back to file size | Some architectures and quant types are marked approximate |
 | No benchmark or history | Preset tuning is folklore |
 | No crash detection, restart policy or alerts | A server can die silently |
 | Models are configured by hand | Setup friction before the first launch |
@@ -419,7 +419,7 @@ boundary.
 | M1.2 | [Estimate breakdown and what-if](features/m1-02-estimate-breakdown-and-what-if-preview.md) | M1 | P0 | M | — | shipped |
 | M1.3 | [Observed-vs-estimate capture](features/m1-03-observed-vs-estimate-capture.md) | M1 | P1 | S/M | — | shipped |
 | M1.4 | [Effective-config diff](features/m1-04-effective-config-diff.md) | M1 | P2 | S | M1.1 | shipped |
-| M2.1 | [MoE expert offload modeling](features/m2-01-moe-expert-offload-modeling.md) | M2 | P1 | L | — | planned |
+| M2.1 | [MoE expert offload modeling](features/m2-01-moe-expert-offload-modeling.md) | M2 | P1 | L | — | shipped |
 | M2.2 | [Architecture-aware estimate](features/m2-02-architecture-aware-estimate.md) | M2 | P1 | L | M2.1 | planned |
 | M2.3 | [Auto-fit solver](features/m2-03-auto-fit-solver.md) | M2 | P1 | M/L | M1.2, M2.1, M2.2 | planned |
 | M2.4 | [Save recommendation as a preset](features/m2-04-save-a-recommendation-as-a-preset.md) | M2 | P2 | S | M2.3 | planned |

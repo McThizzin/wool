@@ -34,5 +34,7 @@ changes before they are written.
 **Implementation notes.** `gguf.ComputeBudget` derives
 `available = total - reserve - other_used`; `ProcessVRAM` reads
 `drm-memory-vram` from `/proc/<pid>/fdinfo` so a running standalone server's
-own allocation is not counted twice. `n_cpu_moe` is still not modelled: the
-preview says so instead of pretending the estimate changed.
+own allocation is not counted twice. At the time of this feature `n_cpu_moe`
+was not modelled: the preview said so instead of pretending the estimate
+changed. [M2.1](m2-01-moe-expert-offload-modeling.md) now models it when tensor
+metadata is available and reports approximation reasons otherwise.

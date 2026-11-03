@@ -510,17 +510,32 @@ test doubles.
 
 ## VRAM estimate
 
-`gguf.ReadMeta` reads only the GGUF key/value block, enough to get the
-architecture, block count, embedding size, attention heads, training context
-and, for hybrid models, `full_attention_interval`. `EstimateVRAM` then
-computes:
+`gguf.ReadMeta` reads the GGUF key/value block and the tensor-info table,
+enough to get the architecture, block count, embedding size, attention heads,
+training context, `full_attention_interval` and the size of every tensor.
+Tensor data is never read. `EstimateVRAM` then computes:
 
 ```text
-weights  = file size * (offloaded layers / block count)
-kv       = KV bytes for ctx, full-attention layers, head counts, cache type
-overhead = 512 MiB (compute buffers and allocator slack)
-total    = weights + kv + overhead
+gpu weights = offloaded block tensors + non-block tensors, minus moved experts
+cpu weights = CPU-resident block tensors + experts moved by n_cpu_moe
+kv          = KV bytes for ctx, full-attention layers, head counts, cache type
+overhead    = 512 MiB (compute buffers and allocator slack)
+total       = gpu weights + kv + overhead
 ```
+
+`gpu weights` follows `gpu_layers`: the last N transformer blocks, plus (for
+now) all non-block tensors, are charged to VRAM. `n_cpu_moe = N` then moves the
+routed-expert tensors (`blk.<n>.ffn_*_exps`) of the first N layers to
+`cpu weights`, matching llama.cpp. Routers (`ffn_gate_inp`) and shared experts
+(`ffn_*_shexp`) stay with their layer. `Total` remains the VRAM term; the host
+weight term is reported alongside it and is not added to the GPU total.
+
+When the tensor table is absent, a tensor type is unknown, or a model declares
+experts without recognised expert tensors, the estimator falls back to
+`file size * (offloaded layers / block count)` and sets `Approximate` with a
+short reason list. The same applies to parsing problems such as a computed
+tensor total larger than the file. `wool doctor --json` exposes the byte terms,
+the flag and the reasons.
 
 Hybrid architectures such as `qwen35` (Qwen3.5/Qwen3-Next) interleave
 recurrent layers with full-attention layers. Only every
@@ -529,11 +544,11 @@ interval of 4) allocates a KV cache; recurrent state is small and constant
 size, so it is covered by the overhead term. Counting KV for every block
 overestimated these models badly.
 
-The estimate is intentionally approximate. It does not model MoE CPU offload,
-context checkpoints, unused MTP tensors in some GGUFs, tensor fragmentation or
-driver overhead, so a model with `n_cpu_moe` can still show as over-VRAM.
-Doctor adds the note `estimate ignores n_cpu_moe` in that case. The UI uses
-`!` for an over-budget estimate, not a hard launch block.
+The estimate is intentionally approximate. It does not model context
+checkpoints, unused MTP tensors in some GGUFs, speculative decoding buffers,
+tensor fragmentation or driver overhead. When a term is approximate, Doctor
+appends `estimate is approximate` with the reasons instead of claiming an exact
+fit. The UI uses `!` for an over-budget estimate, not a hard launch block.
 
 `gguf.ComputeBudget` turns live VRAM into a budget for a *new* server:
 
@@ -548,12 +563,13 @@ The server's own usage is read best-effort from `drm-memory-vram` in
 count as other usage. If the process cannot be measured, all current usage
 counts as other usage. Headroom is `budget - estimate` and may be negative.
 
-The dashboard and editor draw a segmented bar (`weights`, `KV`, `overhead`)
-against the card's total VRAM and name the largest term as the limiting one.
-The editor recomputes the estimate from the draft value while typing; it does
-not write the file until `Enter`. `Esc` restores the resolved value. Because
-`n_cpu_moe` is not modelled, the preview says the GPU estimate is unchanged
-rather than pretending to account for it.
+The dashboard and editor draw a segmented bar (`GPU weights`, `KV`, `overhead`)
+against the card's total VRAM, show the CPU-resident weight term alongside it,
+and name the largest VRAM term as the limiting one. The editor recomputes the
+estimate from the draft value while typing; it does not write the file until
+`Enter`. `Esc` restores the resolved value. Changing `n_cpu_moe` moves expert
+bytes between the GPU and CPU terms when tensor metadata is available; when it
+is not, the preview says the estimate is approximate and why.
 
 ## Observed measurements
 
@@ -585,8 +601,9 @@ A corrupt line is skipped. There is no correction factor yet; that is M3.4.
 - hardware and VRAM;
 - model directories and GGUF files;
 - duplicate model paths (the router would expose the same weights twice);
-- per-model and per-preset fit estimates, including the weights/KV/overhead
-  breakdown, budget, headroom and limiting term;
+- per-model and per-preset fit estimates, including the GPU/CPU weights, KV and
+  overhead breakdown, budget, headroom, limiting term and approximation
+  reasons;
 - the newest matching observation and its sample count, when one exists.
 
 Warnings do not make the command fail; failures do. `wool doctor --json`
@@ -649,10 +666,11 @@ wool router stop
 See [`roadmap.md`](roadmap.md) for the sequenced plan, priorities and exit
 criteria. The limitations below are the current state, not the plan.
 
-- The VRAM estimate is conservative. Hybrid recurrent layers are modelled,
-  but MoE CPU offload, unused MTP tensors and speculative decoding buffers are
-  not; sysfs VRAM right after load can read lower before mmap pages are
-  faulted. Use the estimate as a fit warning, not a measurement.
+- The VRAM estimate is conservative. Hybrid recurrent layers and MoE expert
+  offload are modelled, but non-block tensor placement, sliding-window KV,
+  unused MTP tensors and speculative decoding buffers are not; sysfs VRAM right
+  after load can read lower before mmap pages are faulted. Use the estimate as
+  a fit warning, not a measurement.
 - Only AMD sysfs telemetry is implemented; NVIDIA/Intel need new backends.
 - The TUI manages one standalone server and one router, not arbitrary named
   instances. The daemon layer already uses names and can grow this later.
