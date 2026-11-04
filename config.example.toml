@@ -58,7 +58,7 @@ seed = -1
 # flag contexts that do not fit the 8 GiB card.
 
 [models.gemma-4-heretic]
-path = "~/models/gemma-4-heretic.gguf"
+path = "~/models/Google/heretic/gemma-4-E4B-it-uncensored-heretic.Q4_K_M.gguf"
 alias = "gemma-heretic"
 ctx = 32768
 
@@ -68,8 +68,7 @@ top_k = 64
 min_p = 0.0
 
 [models.gemma-4-e4b-unsloth]
-# Not currently present in ~/models; `wool doctor` will warn.
-path = "~/models/gemma-4-E4B-unsloth.gguf"
+path = "~/models/Google/unsloth/gemma-4-E4B-it-Q4_K_M.gguf"
 alias = "gemma-unsloth"
 ctx = 32768
 
@@ -78,8 +77,8 @@ top_k = 64
 min_p = 0.0
 
 [models.qwen35-4b-mtp]
-path = "~/models/Qwen3.5-4B-MTP.gguf"
-alias = "qwen3.5-MTP"
+path = "~/models/Qwen/unsloth/Qwen3.5-4B-UD-Q4_K_XL.gguf"
+alias = "Qwen-MTP"
 ctx = 65536
 
 # MTP speculative decoding is built into this model.
@@ -95,7 +94,7 @@ min_p = 0.0
 repeat_penalty = 1.05
 
 [models.ornith-15-9b]
-path = "~/models/Ornith-1.5-9B.gguf"
+path = "~/models/Ornith/Ornith-1.5-9B/Ornith-1.5-9B-Q4_K_M.gguf"
 alias = "Ornith-9B"
 ctx = 32768
 
@@ -107,8 +106,8 @@ min_p = 0.0
 repeat_penalty = 1.05
 
 [models.qwen3-4b-cyber]
-path = "~/models/Qwen3-4B-cybersecurity-heretic.gguf"
-alias = "Qwen-Cyber"
+path = "~/models/Qwen/CyberQwen/CyberQwen3-4B-Heretic.Q4_K_M.gguf"
+alias = "CyberQwen"
 ctx = 65536
 
 [models.qwen3-4b-cyber.sampling]
@@ -119,14 +118,26 @@ min_p = 0.0
 repeat_penalty = 1.05
 
 [models.lfm25-24b-a2b]
-path = "~/models/LFM2.5-24B-A2B-UD-Q4_K_XL.gguf"
-alias = "LFM2.5-24B-MoE"
+path = "~/models/LiquidAI/unsloth/LFM2.5-24B-A2B-UD-Q4_K_XL.gguf"
+alias = "LFM-24B-MOE"
 ctx = 32768
 n_cpu_moe = 999      # keep MoE expert weights on CPU; fit attention on 8 GiB
 batch_size = 2048
 ubatch_size = 256
 
 [models.lfm25-24b-a2b.sampling]
+temp = 0.8
+top_p = 0.9
+top_k = 40
+min_p = 0.0
+repeat_penalty = 1.05
+
+[models.lfm3-1-7b]
+path = "~/models/LiquidAI/LFM3-1.7B/LFM3-1.7B-BF16.gguf"
+alias = "LFM3"
+ctx = 32768
+
+[models.lfm3-1-7b.sampling]
 temp = 0.8
 top_p = 0.9
 top_k = 40

@@ -48,7 +48,7 @@ func TestSingleArgs(t *testing.T) {
 		{"--model", r.ModelPath},
 		{"--host", "127.0.0.1"},
 		{"--port", "8080"},
-		{"--alias", "qwen3.5-MTP"},
+		{"--alias", "Qwen-MTP"},
 		{"-c", "65536"},
 		{"--gpu-layers", "999"},
 		{"--threads", strconv.Itoa(r.Threads)},
@@ -158,7 +158,7 @@ func TestRenderRouterINI(t *testing.T) {
 	qwen := sections["qwen35-4b-mtp"]
 	for k, want := range map[string]string{
 		"model":     config.AbsPath(cfg.Models["qwen35-4b-mtp"].Path),
-		"alias":     "qwen3.5-MTP",
+		"alias":     "Qwen-MTP",
 		"ctx-size":  "65536",
 		"temp":      "0.7",
 		"top-p":     "0.8",

@@ -11,8 +11,8 @@ func TestLoadExample(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(cfg.Models) != 6 {
-		t.Fatalf("models = %d, want 6", len(cfg.Models))
+	if len(cfg.Models) != 7 {
+		t.Fatalf("models = %d, want 7", len(cfg.Models))
 	}
 	if len(cfg.Presets) != 12 {
 		t.Fatalf("presets = %d, want 12", len(cfg.Presets))
