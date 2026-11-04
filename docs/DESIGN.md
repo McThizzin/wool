@@ -512,37 +512,65 @@ test doubles.
 
 `gguf.ReadMeta` reads the GGUF key/value block and the tensor-info table,
 enough to get the architecture, block count, embedding size, attention heads,
-training context, `full_attention_interval` and the size of every tensor.
-Tensor data is never read. `EstimateVRAM` then computes:
+training context, `full_attention_interval`, the sliding-window/shared-KV
+metadata and the size of every tensor. Tensor data is never read.
+`EstimateVRAM` then computes:
 
 ```text
-gpu weights = offloaded block tensors + non-block tensors, minus moved experts
-cpu weights = CPU-resident block tensors + experts moved by n_cpu_moe
-kv          = KV bytes for ctx, full-attention layers, head counts, cache type
+gpu weights = offloaded block tensors + offloaded output/global tensors, minus moved experts
+cpu weights = CPU-resident block tensors + input tensors + host-resident output/global tensors + moved experts
+kv          = per-layer KV for ctx (SWA capped at the window), full-attention layers, head counts, cache type
 overhead    = 512 MiB (compute buffers and allocator slack)
 total       = gpu weights + kv + overhead
 ```
 
-`gpu weights` follows `gpu_layers`: the last N transformer blocks, plus (for
-now) all non-block tensors, are charged to VRAM. `n_cpu_moe = N` then moves the
-routed-expert tensors (`blk.<n>.ffn_*_exps`) of the first N layers to
-`cpu weights`, matching llama.cpp. Routers (`ffn_gate_inp`) and shared experts
-(`ffn_*_shexp`) stay with their layer. `Total` remains the VRAM term; the host
-weight term is reported alongside it and is not added to the GPU total.
+`gpu weights` follows llama.cpp's placement, not a flat file-size fraction.
+`gpu_layers` counts the output layer: the last N of `block_count + 1` layers are
+placed on the GPU, so `gpu_layers = 1` offloads the output layer alone.
+Negative values and values above `block_count + 1` mean all layers. Tensor
+names are classified once: block tensors follow their layer, input tensors
+(`token_embd`, `position_embd`, per-layer token embeddings and similar) always
+stay on the CPU, output tensors follow the output layer, and repeating/global
+tensors follow layer 0. The output layer is layer `block_count`.
 
-When the tensor table is absent, a tensor type is unknown, or a model declares
-experts without recognised expert tensors, the estimator falls back to
+`n_cpu_moe = N` then moves the routed-expert tensors (`blk.<n>.ffn_*_exps`) of
+the first N layers to `cpu weights`, matching llama.cpp. Routers (`ffn_gate_inp`)
+and shared experts (`ffn_*_shexp`) stay with their layer. `Total` remains the
+VRAM term; the host weight term is reported alongside it and is not added to the
+GPU total.
+
+KV is computed per layer instead of charging every block:
+
+- Hybrid architectures such as `qwen35` (Qwen3.5/Qwen3-Next) interleave
+  recurrent layers with full-attention layers. Only every
+  `full_attention_interval`-th layer (1-indexed: layers 4, 8, 12, ... for an
+  interval of 4) allocates a KV cache; recurrent state is small and constant
+  size, so it is covered by the overhead term.
+- Sliding-window layers are charged `min(ctx, sliding_window)` and use
+  `key_length_swa`/`value_length_swa` when the model provides them. Global
+  layers keep the full context. An explicit per-layer pattern array wins; the
+  scalar form follows llama.cpp's default (every Nth layer is dense, so `N=0`
+  means all SWA and `N=1` all dense).
+- Gemma 2, Gemma 3 and Gemma 3n defaults are applied when the GGUF omits the
+  pattern: window 4096 with every 2nd layer dense, every 6th layer dense, and
+  every 5th layer dense with shared KV from layer 20 respectively.
+- Shared-KV models allocate a cache only for the first
+  `block_count - shared_kv_layers` layers; trailing layers reuse an earlier
+  cache.
+
+When the tensor table is absent, a tensor type is unknown, a tensor name falls
+outside the placement table, a block tensor is outside `block_count`, or a model
+declares experts without recognised expert tensors, the estimator falls back to
 `file size * (offloaded layers / block count)` and sets `Approximate` with a
-short reason list. The same applies to parsing problems such as a computed
-tensor total larger than the file. `wool doctor --json` exposes the byte terms,
-the flag and the reasons.
+short reason list. The file-size fallback treats `gpu_layers` as transformer
+blocks and clamps the fraction at one. A sliding window without a known layer
+pattern is charged full context and also marked approximate. The same applies
+to parsing problems such as a computed tensor total larger than the file.
+`wool doctor --json` exposes the byte terms, the flag and the reasons.
 
-Hybrid architectures such as `qwen35` (Qwen3.5/Qwen3-Next) interleave
-recurrent layers with full-attention layers. Only every
-`full_attention_interval`-th layer (1-indexed: layers 4, 8, 12, ... for an
-interval of 4) allocates a KV cache; recurrent state is small and constant
-size, so it is covered by the overhead term. Counting KV for every block
-overestimated these models badly.
+Placement and the Gemma defaults were checked against llama.cpp `0.6.0-dev`
+(build 11429, commit `d812350493`). These are implementation details, so revisit
+the table when the supported `llama-server` version changes.
 
 The estimate is intentionally approximate. It does not model context
 checkpoints, unused MTP tensors in some GGUFs, speculative decoding buffers,

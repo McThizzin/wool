@@ -23,7 +23,7 @@
 - **One TOML source of truth.** Models, presets, launch options, sampling, router settings, and themes all live in `config.toml`. There is no legacy `presets.conf` importer.
 - **Effective-config diff.** `wool config diff TARGET` and the TUI `D` overlay show only the launch options that differ from the model or defaults layer, with the source of each side.
 - **Full router control.** Start/stop the router, list models, load/unload, reload presets, and read per-model stats and slots.
-- **VRAM-fit estimates.** Reads GGUF metadata, supports hybrid attention (Qwen3.5/Qwen3-Next), per-layer KV heads, and quantized KV cache types. The UI shows `weights + KV + overhead`, the budget after reserve and other GPU usage, headroom and the limiting term.
+- **VRAM-fit estimates.** Reads GGUF metadata and the tensor table, models llama.cpp's tensor placement, Gemma-style sliding-window/shared KV, hybrid attention (Qwen3.5/Qwen3-Next), per-layer KV heads, and quantized KV cache types. The UI shows `weights + KV + overhead`, the budget after reserve and other GPU usage, headroom and the limiting term.
 - **Observed vs. estimate.** After a launch, `wool` records used VRAM at 5s and 15s and shows it next to the estimate with a sample count.
 - **Hardware telemetry.** CPU, RAM, AMD `amdgpu` VRAM, temperature, power, fan, and sparklines, with no extra daemon required.
 - **Preset and model editing.** Edit resolved launch options in the TUI; changes are written back to TOML with comments and ordering preserved. Changing `ctx`, cache type, `gpu_layers` or `n_cpu_moe` previews the new estimate without saving.
@@ -226,11 +226,11 @@ Logs are tailed from disk with a bounded read, so reattaching is cheap even for 
 
 ## VRAM estimate
 
-`wool` estimates VRAM from the GGUF key/value block and tensor-info table: each tensor is sized from its type and dimensions, then weights are split into GPU and CPU terms according to `gpu_layers` and `n_cpu_moe`. The KV cache comes from context, attention heads, cache type, and the full-attention layer schedule, plus a fixed overhead for compute buffers and allocator slack.
+`wool` estimates VRAM from the GGUF key/value block and tensor-info table: each tensor is sized from its type and dimensions, then classified as a block, input, output or repeating tensor. Placement follows llama.cpp: `gpu_layers` counts the output layer, input embeddings always stay in host memory, output tensors follow the output layer, and repeating tensors follow layer 0. `n_cpu_moe` moves expert bytes independently.
 
-For MoE models, `n_cpu_moe = N` keeps the routed-expert tensors (`ffn_*_exps`) of the first `N` layers on the CPU; routers and shared experts stay with their layer. If the tensor table is missing, a quantisation type is unknown, or expert tensors cannot be identified, `wool` falls back to the file-size fraction and marks the estimate approximate. Doctor and the editor preview explain why.
+The KV cache comes from context, attention heads, cache type and the layer schedule. Hybrid models such as Qwen3.5/Qwen3-Next only keep KV for every `full_attention_interval`-th layer. Sliding-window layers are charged `min(ctx, sliding_window)` with their SWA head widths, while global layers keep the full context; trailing shared-KV layers allocate nothing. Gemma 2/3/3n defaults are applied when the file omits the pattern. A sliding window without a known pattern is charged full context and marked approximate.
 
-Hybrid models such as Qwen3.5/Qwen3-Next only keep KV for every `full_attention_interval`-th layer; `wool` models that instead of charging KV for every block. The estimate is deliberately conservative and still omits unused MTP tensors and speculative decoding buffers, so it is a fit warning rather than an exact measurement.
+For MoE models, `n_cpu_moe = N` keeps the routed-expert tensors (`ffn_*_exps`) of the first `N` layers on the CPU; routers and shared experts stay with their layer. If the tensor table is missing, a quantisation type or tensor name is unsupported, or expert tensors cannot be identified, `wool` falls back to the file-size fraction and marks the estimate approximate. Doctor and the editor preview explain why. A fixed overhead covers compute buffers and allocator slack. The estimate is deliberately conservative and still omits unused MTP tensors and speculative decoding buffers, so it is a fit warning rather than an exact measurement.
 
 ## Project layout
 
@@ -270,7 +270,7 @@ Tests cover config parsing/merging/editing, effective-config diffs, GGUF metadat
 - One standalone server and one router are managed per state directory.
 - The editor can reset launch-option overrides, but not `model`, `path`, `alias` or `extra` keys.
 - Standalone servers are not automatically restarted; router-managed models are supervised by `llama-server` itself.
-- VRAM estimates fall back to a file-size approximation, and say so, when tensor metadata or a quantisation type is unsupported. Speculative decoding buffers are not modelled.
+- VRAM estimates fall back to a file-size approximation, and say so, when tensor metadata, a quantisation type or a tensor name is unsupported, or when a sliding-window layer pattern is unknown. Speculative decoding buffers are not modelled.
 - Observations are system-wide VRAM deltas; background GPU work makes them noisy. They are never presented as exact usage.
 
 See [`docs/DESIGN.md`](docs/DESIGN.md) for the full design, lifecycle, and config reference, and [`docs/roadmap.md`](docs/roadmap.md) for what is planned and in what order.

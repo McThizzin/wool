@@ -36,6 +36,25 @@ type Meta struct {
 	// the architecture. Zero means the model is not a mixture of experts.
 	ExpertCount int `json:"expert_count,omitempty"`
 
+	// SlidingWindow is the window size for sliding-window attention layers.
+	// Zero means the model does not use sliding-window attention.
+	SlidingWindow int `json:"sliding_window,omitempty"`
+	// SlidingWindowPattern is the per-layer SWA schedule from
+	// attention.sliding_window_pattern. A non-zero value marks an SWA layer.
+	SlidingWindowPattern []int `json:"sliding_window_pattern,omitempty"`
+	// SlidingWindowPatternN is the scalar form of the pattern: every Nth
+	// layer is dense, the rest are SWA. SlidingWindowPatternSet distinguishes
+	// a present zero (all SWA) from an absent pattern.
+	SlidingWindowPatternN   int  `json:"sliding_window_pattern_n,omitempty"`
+	SlidingWindowPatternSet bool `json:"sliding_window_pattern_set,omitempty"`
+	// KeyLengthSWA and ValueLengthSWA are per-head widths for SWA layers.
+	// Zero means they match the full-attention lengths.
+	KeyLengthSWA   int `json:"key_length_swa,omitempty"`
+	ValueLengthSWA int `json:"value_length_swa,omitempty"`
+	// SharedKVLayers is the number of trailing layers that reuse an earlier
+	// layer's KV cache instead of allocating their own (Gemma 4 and friends).
+	SharedKVLayers int `json:"shared_kv_layers,omitempty"`
+
 	// Tensors is the parsed tensor-info table. It is intentionally omitted
 	// from JSON: the table can be large and the estimate already exposes the
 	// aggregated byte terms.
@@ -485,10 +504,58 @@ func readMeta(rd io.Reader) (Meta, error) {
 		CtxTrain:              asInt(getOr(get, "context_length")),
 		FullAttentionInterval: asInt(getOr(get, "full_attention_interval")),
 		ExpertCount:           asInt(getOr(get, "expert_count")),
+		SlidingWindow:         asInt(getOr(get, "attention.sliding_window")),
+		KeyLengthSWA:          asInt(getOr(get, "attention.key_length_swa")),
+		ValueLengthSWA:        asInt(getOr(get, "attention.value_length_swa")),
+		SharedKVLayers:        asInt(getOr(get, "attention.shared_kv_layers")),
 		Tensors:               tensors,
 		UnmodeledTensors:      unmodeled,
 		Approximate:           unmodeled > 0,
 		ApproximateReasons:    reasons,
+	}
+	if v, ok := get("attention.sliding_window_pattern"); ok {
+		switch v.kind {
+		case kindUintArray:
+			for _, n := range v.arr {
+				meta.SlidingWindowPattern = append(meta.SlidingWindowPattern, int(n))
+			}
+		case kindUint:
+			meta.SlidingWindowPatternN = int(v.u)
+			meta.SlidingWindowPatternSet = true
+		}
+	}
+	if meta.SlidingWindow == 0 && arch == "gemma2" {
+		// llama.cpp defaults Gemma 2's window to 4096 when the key is absent.
+		meta.SlidingWindow = 4096
+	}
+	if meta.SlidingWindow > 0 && len(meta.SlidingWindowPattern) == 0 && !meta.SlidingWindowPatternSet {
+		// A few architectures have a fixed default schedule in llama.cpp.
+		switch arch {
+		case "gemma2":
+			meta.SlidingWindowPatternN, meta.SlidingWindowPatternSet = 2, true
+		case "gemma3", "gemma-embedding", "gemma-embedding2":
+			meta.SlidingWindowPatternN, meta.SlidingWindowPatternSet = 6, true
+		case "gemma3n":
+			meta.SlidingWindowPatternN, meta.SlidingWindowPatternSet = 5, true
+		}
+	}
+	if arch == "gemma3n" && meta.SharedKVLayers == 0 && meta.BlockCount > 20 {
+		// llama.cpp starts Gemma 3n's shared KV at layer 20.
+		meta.SharedKVLayers = meta.BlockCount - 20
+	}
+	if meta.SlidingWindow > 0 && len(meta.SlidingWindowPattern) == 0 && !meta.SlidingWindowPatternSet {
+		meta.Approximate = true
+		meta.ApproximateReasons = appendUnique(meta.ApproximateReasons,
+			"sliding-window layer pattern is not modelled")
+	}
+	if meta.SharedKVLayers < 0 {
+		meta.SharedKVLayers = 0
+	}
+	if meta.SharedKVLayers >= meta.BlockCount {
+		meta.Approximate = true
+		meta.ApproximateReasons = appendUnique(meta.ApproximateReasons,
+			"shared KV layer count is out of range")
+		meta.SharedKVLayers = meta.BlockCount - 1
 	}
 	if v, ok := get("attention.head_count_kv"); ok {
 		if v.kind == kindUintArray {
@@ -575,6 +642,11 @@ func wantedKey(key string) bool {
 		strings.HasSuffix(key, ".attention.head_count_kv"),
 		strings.HasSuffix(key, ".attention.key_length"),
 		strings.HasSuffix(key, ".attention.value_length"),
+		strings.HasSuffix(key, ".attention.key_length_swa"),
+		strings.HasSuffix(key, ".attention.value_length_swa"),
+		strings.HasSuffix(key, ".attention.sliding_window"),
+		strings.HasSuffix(key, ".attention.sliding_window_pattern"),
+		strings.HasSuffix(key, ".attention.shared_kv_layers"),
 		strings.HasSuffix(key, ".context_length"),
 		strings.HasSuffix(key, ".full_attention_interval"),
 		strings.HasSuffix(key, ".expert_count"):
@@ -627,7 +699,41 @@ func (m Meta) FullAttention(layer int) bool {
 	return (layer+1)%m.FullAttentionInterval == 0
 }
 
+// SlidingWindowLayer reports whether a layer uses sliding-window attention.
+// An explicit per-layer array takes precedence over the scalar pattern. The
+// scalar pattern follows llama.cpp's set_swa_pattern with dense_first=false:
+// every Nth layer is dense and the rest are SWA (N=0 means all SWA, N=1 all
+// dense).
+func (m Meta) SlidingWindowLayer(layer int) bool {
+	if len(m.SlidingWindowPattern) > 0 {
+		return layer < len(m.SlidingWindowPattern) && m.SlidingWindowPattern[layer] != 0
+	}
+	if !m.SlidingWindowPatternSet || m.SlidingWindow <= 0 {
+		return false
+	}
+	n := m.SlidingWindowPatternN
+	if n <= 0 {
+		return true
+	}
+	return layer%n != n-1
+}
+
+// KVLayers returns the number of leading layers that allocate a KV cache.
+// Trailing shared-KV layers reuse an earlier cache and add no memory.
+func (m Meta) KVLayers() int {
+	if m.BlockCount <= 0 {
+		return 0
+	}
+	n := m.BlockCount - m.SharedKVLayers
+	if n < 1 {
+		n = 1
+	}
+	return n
+}
+
 // KVBytes estimates the KV cache for ctx tokens with the given cache types.
+// SWA layers are charged min(ctx, window); full-attention layers are charged
+// the whole context. Recurrent and shared-KV layers are skipped.
 func (m Meta) KVBytes(ctx int, cacheK, cacheV string) uint64 {
 	if ctx <= 0 || m.BlockCount <= 0 {
 		return 0
@@ -646,13 +752,27 @@ func (m Meta) KVBytes(ctx int, cacheK, cacheV string) uint64 {
 		}
 	}
 	bk, bv := BytesPerElement(cacheK), BytesPerElement(cacheV)
+	layers := m.KVLayers()
 	var total float64
-	for i := 0; i < m.BlockCount; i++ {
+	for i := 0; i < layers; i++ {
 		if !m.FullAttention(i) {
 			continue
 		}
+		layerK, layerV := kd, vd
+		tokens := ctx
+		if m.SlidingWindowLayer(i) {
+			if m.KeyLengthSWA > 0 {
+				layerK = m.KeyLengthSWA
+			}
+			if m.ValueLengthSWA > 0 {
+				layerV = m.ValueLengthSWA
+			}
+			if m.SlidingWindow > 0 && m.SlidingWindow < tokens {
+				tokens = m.SlidingWindow
+			}
+		}
 		h := float64(m.HeadsAt(i))
-		total += float64(ctx) * h * (float64(kd)*bk + float64(vd)*bv)
+		total += float64(tokens) * h * (float64(layerK)*bk + float64(layerV)*bv)
 	}
 	return uint64(total)
 }
@@ -764,18 +884,17 @@ func (b Budget) Headroom(e Estimate) int64 {
 }
 
 // EstimateVRAM estimates GPU memory for the given context. gpuLayers is the
-// number of transformer layers offloaded; values >= BlockCount mean all and
-// zero means no layers. nCPUMoE is llama.cpp's --n-cpu-moe: the routed-expert
-// tensors of the first N layers stay on the CPU. Overhead covers compute
-// buffers and allocator slack, not the KV cache.
+// number of layers offloaded, counting the output layer like llama.cpp does:
+// the last N of BlockCount+1 layers are placed on the GPU. Values greater
+// than BlockCount+1 mean all and negative means all. nCPUMoE is llama.cpp's
+// --n-cpu-moe: the routed-expert tensors of the first N layers stay on the
+// CPU. Overhead covers compute buffers and allocator slack, not the KV cache.
 func EstimateVRAM(m Meta, fileBytes uint64, ctx, gpuLayers, nCPUMoE int, cacheK, cacheV string) Estimate {
-	if m.BlockCount > 0 {
-		if gpuLayers > m.BlockCount {
-			gpuLayers = m.BlockCount
-		}
-		if gpuLayers < 0 {
-			gpuLayers = m.BlockCount
-		}
+	if gpuLayers < 0 {
+		gpuLayers = m.BlockCount + 1
+	}
+	if m.BlockCount > 0 && gpuLayers > m.BlockCount+1 {
+		gpuLayers = m.BlockCount + 1
 	}
 	if nCPUMoE < 0 {
 		nCPUMoE = 0
@@ -790,18 +909,26 @@ func EstimateVRAM(m Meta, fileBytes uint64, ctx, gpuLayers, nCPUMoE int, cacheK,
 		Overhead:  512 << 20,
 	}
 
-	gpu, cpu, experts, ok := m.placeWeights(fileBytes, gpuLayers, nCPUMoE)
+	gpu, cpu, experts, reason, ok := m.placeWeights(fileBytes, gpuLayers, nCPUMoE)
 	if ok {
 		est.GPUWeights, est.CPUWeights = gpu, cpu
 	} else {
+		// The file-size fallback treats gpu_layers as transformer blocks, so
+		// the output layer does not push the fraction past one.
+		blocks := gpuLayers
+		if blocks > m.BlockCount {
+			blocks = m.BlockCount
+		}
 		frac := 0.0
 		if m.BlockCount > 0 {
-			frac = float64(gpuLayers) / float64(m.BlockCount)
+			frac = float64(blocks) / float64(m.BlockCount)
 		}
 		est.GPUWeights = uint64(float64(fileBytes) * frac)
 		est.CPUWeights = fileBytes - est.GPUWeights
 		est.Approximate = true
 		switch {
+		case reason != "":
+			est.Reasons = append(est.Reasons, reason)
 		case len(m.Tensors) == 0:
 			est.Reasons = append(est.Reasons, "tensor metadata unavailable; using file-size approximation")
 		case m.UnmodeledTensors > 0:
@@ -825,26 +952,165 @@ func EstimateVRAM(m Meta, fileBytes uint64, ctx, gpuLayers, nCPUMoE int, cacheK,
 	return est
 }
 
+type tensorClass int
+
+const (
+	tensorUnknown tensorClass = iota
+	tensorInput
+	tensorOutput
+	tensorGlobal
+)
+
+// The lists below mirror llama.cpp's LLM_TENSOR_INFOS classification. Input
+// tensors always stay on the CPU. Output tensors follow the output layer,
+// which is the extra layer after the transformer blocks. Repeating tensors
+// belong to a layer (usually layer 0). Any name outside these lists makes the
+// placement uncertain, so the estimator falls back rather than guessing.
+var inputTensorNames = []string{
+	"token_embd",
+	"position_embd",
+	"token_types",
+	"value_embd",
+	"per_layer_token_embd",
+	"masked_embd_centroids",
+	"masked_embd_ordering",
+	"mask_embd",
+}
+
+var outputTensorNames = []string{
+	"output",
+	"cls",
+	"cls.output",
+	"cls.norm",
+	"decision.hidden_norm",
+	"decision.proj_memory",
+	"decision.proj_question",
+	"decision.proj_option_question",
+	"decision.proj_global",
+	"decision.proj_option_context",
+	"decision.proj_option_lexical",
+	"decision.option_summary_norm",
+	"decision.field_norm",
+	"decision.option_norm",
+	"decision.scales",
+	"decision.scorer",
+	"decision.scorer_out",
+	"decision.query_norm",
+	"decision.key",
+	"decision.query",
+	"decision.option_mlp",
+	"decision.query_mlp",
+	"dense_2",
+	"dense_3",
+	"output_norm",
+	"dec.output_norm",
+	"enc.output_norm",
+	"output_hc_fn",
+	"output_hc_base",
+	"output_hc_scale",
+	"output_hc_norm",
+	"output_hc_down",
+	"output_hc_up",
+	"output_res_score",
+	"altup_proj",
+	"altup_unembd_proj",
+	"nextn.post_projection",
+	"fc",
+	"d2t",
+	"markov_w1",
+	"markov_w2",
+	"conf_proj",
+	"joint_proj",
+	"selector_predecessor",
+	"selector_successor",
+	"selector_hidden",
+	"lilicorr.token_proj",
+	"lilicorr.pass_hidden_proj",
+	"lilicorr.slot_embedding",
+	"lilicorr.rank_embedding",
+	"lilicorr.attention_bias",
+	"lilicorr.context_proj",
+	"lilicorr.output_norm",
+	"lilicorr.anchor_norm",
+	"lilicorr.factor_input_proj",
+	"lilicorr.out_head",
+	"lilicorr.in_head",
+	"lilicorr.anchor_out_head",
+}
+
+var globalTensorNames = []string{
+	"hrm.z_l_init",
+	"rope_freqs",
+	"rope_factors_long",
+	"rope_factors_short",
+	"per_layer_model_proj",
+	"per_layer_proj_norm",
+	"conv1d",
+	"nextn.pre_projection",
+}
+
+func tensorClassOf(arch, name string) tensorClass {
+	// token_embd_norm is a repeating tensor in most architectures, but LFM2
+	// reuses the name for its output norm.
+	if name == "token_embd_norm" || strings.HasPrefix(name, "token_embd_norm.") {
+		if arch == "lfm2" || arch == "lfm2moe" {
+			return tensorOutput
+		}
+		return tensorGlobal
+	}
+	switch {
+	case matchesTensorNames(inputTensorNames, name):
+		return tensorInput
+	case matchesTensorNames(outputTensorNames, name):
+		return tensorOutput
+	case matchesTensorNames(globalTensorNames, name):
+		return tensorGlobal
+	default:
+		return tensorUnknown
+	}
+}
+
+func matchesTensorNames(names []string, name string) bool {
+	for _, base := range names {
+		if name == base || strings.HasPrefix(name, base+".") {
+			return true
+		}
+	}
+	return false
+}
+
 // placeWeights splits the model into GPU and CPU weight terms using the parsed
-// tensor table. It reports false when the table cannot be trusted, in which
-// case the caller falls back to the file-size fraction.
-func (m Meta) placeWeights(fileBytes uint64, gpuLayers, nCPUMoE int) (gpu, cpu, experts uint64, ok bool) {
+// tensor table. It reports false with a reason when the table cannot be
+// trusted, in which case the caller falls back to the file-size fraction.
+func (m Meta) placeWeights(fileBytes uint64, gpuLayers, nCPUMoE int) (gpu, cpu, experts uint64, reason string, ok bool) {
 	if len(m.Tensors) == 0 || m.BlockCount <= 0 || m.UnmodeledTensors > 0 {
-		return 0, 0, 0, false
+		return 0, 0, 0, "", false
 	}
 	block := make([]uint64, m.BlockCount)
 	expert := make([]uint64, m.BlockCount)
-	var nonBlock uint64
+	var input, output, global uint64
 	var accounted uint64
 	for _, t := range m.Tensors {
 		accounted += t.Bytes
-		if layer, isBlock := blockLayer(t.Name); isBlock && layer < m.BlockCount {
+		if layer, isBlock := blockLayer(t.Name); isBlock {
+			if layer >= m.BlockCount {
+				return 0, 0, 0, "tensor " + t.Name + " is outside block_count", false
+			}
 			block[layer] += t.Bytes
 			if isExpertTensor(t.Name) {
 				expert[layer] += t.Bytes
 			}
-		} else {
-			nonBlock += t.Bytes
+			continue
+		}
+		switch tensorClassOf(m.Architecture, t.Name) {
+		case tensorInput:
+			input += t.Bytes
+		case tensorOutput:
+			output += t.Bytes
+		case tensorGlobal:
+			global += t.Bytes
+		default:
+			return 0, 0, 0, "unknown tensor placement: " + t.Name, false
 		}
 	}
 	for _, n := range expert {
@@ -853,21 +1119,36 @@ func (m Meta) placeWeights(fileBytes uint64, gpuLayers, nCPUMoE int) (gpu, cpu, 
 	// A file always contains at least its tensor data. A larger computed total
 	// means the type table or dimensions are wrong, so do not trust it.
 	if accounted == 0 || (fileBytes > 0 && accounted > fileBytes) {
-		return 0, 0, 0, false
+		return 0, 0, 0, "", false
 	}
 	// An architecture that declares experts but has no routed-expert tensors
 	// is outside the naming table. Fall back rather than silently ignoring
 	// n_cpu_moe.
 	if m.ExpertCount > 0 && experts == 0 {
-		return 0, 0, 0, false
+		return 0, 0, 0, "", false
 	}
 
-	gpuStart := m.BlockCount - gpuLayers
-	if gpuLayers > 0 {
-		// Non-block tensors (embeddings, output, norms) are assumed to follow
-		// the layer offload. M2.2 refines this per tensor.
-		gpu += nonBlock
+	// llama.cpp counts the output layer as layer BlockCount: with N GPU
+	// layers, the last N of BlockCount+1 layers are on the GPU. Input tensors
+	// stay on the CPU regardless. Repeating tensors follow layer 0.
+	gpuStart := m.BlockCount + 1 - gpuLayers
+	if gpuStart < 0 {
+		gpuStart = 0
 	}
+	if gpuStart > m.BlockCount {
+		gpuStart = m.BlockCount
+	}
+	if gpuLayers >= 1 {
+		gpu += output
+	} else {
+		cpu += output
+	}
+	if gpuStart == 0 {
+		gpu += global
+	} else {
+		cpu += global
+	}
+	cpu += input
 	// Metadata and alignment padding are mapped from the file and stay in RAM.
 	if fileBytes > accounted {
 		cpu += fileBytes - accounted
@@ -888,7 +1169,7 @@ func (m Meta) placeWeights(fileBytes uint64, gpuLayers, nCPUMoE int) (gpu, cpu, 
 		gpu += bytes - moved
 		cpu += moved
 	}
-	return gpu, cpu, experts, true
+	return gpu, cpu, experts, "", true
 }
 
 func appendUnique(dst []string, values ...string) []string {

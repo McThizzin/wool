@@ -336,44 +336,60 @@ func TestEstimateVRAMSplitsMoEWeights(t *testing.T) {
 	}
 	const file = uint64(5408)
 	const expertPerLayer = uint64(768)
+	const blockPerLayer = uint64(1312)
+	const inputBytes = uint64(128) // token_embd
+	const outputBytes = uint64(32) // output_norm
 
-	// All layers offloaded: everything is on the GPU until experts move.
-	full := EstimateVRAM(m, file, 0, 4, 0, "f16", "f16")
-	if full.GPUWeights != file || full.CPUWeights != 0 {
-		t.Fatalf("full offload = %d/%d", full.GPUWeights, full.CPUWeights)
+	// gpu_layers counts the output layer too: 5 layers for four blocks. With
+	// all five offloaded the input embedding is still CPU-resident.
+	all := EstimateVRAM(m, file, 0, 5, 0, "f16", "f16")
+	if all.GPUWeights != file-inputBytes || all.CPUWeights != inputBytes {
+		t.Fatalf("all offload = %d/%d", all.GPUWeights, all.CPUWeights)
 	}
-	if full.Approximate {
-		t.Fatalf("tensor-aware estimate should be exact: %+v", full)
+	if all.Approximate {
+		t.Fatalf("tensor-aware estimate should be exact: %+v", all)
 	}
 
 	// n_cpu_moe moves the routed experts of the first N layers to the CPU.
-	var prev = full.GPUWeights
+	var prev = all.GPUWeights
 	for n := 1; n <= 4; n++ {
-		e := EstimateVRAM(m, file, 0, 4, n, "f16", "f16")
+		e := EstimateVRAM(m, file, 0, 5, n, "f16", "f16")
 		if e.GPUWeights >= prev {
 			t.Fatalf("n_cpu_moe=%d did not lower GPU weights: %d >= %d", n, e.GPUWeights, prev)
 		}
 		if e.GPUWeights+e.CPUWeights != file {
 			t.Fatalf("n_cpu_moe=%d split = %d+%d", n, e.GPUWeights, e.CPUWeights)
 		}
-		if e.CPUWeights != uint64(n)*expertPerLayer {
+		if e.CPUWeights != inputBytes+uint64(n)*expertPerLayer {
 			t.Fatalf("n_cpu_moe=%d cpu = %d", n, e.CPUWeights)
 		}
 		prev = e.GPUWeights
 	}
 
-	// With only the last two layers offloaded, moving experts from layers that
-	// already live on the CPU changes nothing.
-	partial := EstimateVRAM(m, file, 0, 2, 0, "f16", "f16")
-	if partial.GPUWeights != 2*1312+160 || partial.CPUWeights != 2*1312 {
-		t.Fatalf("partial offload = %d/%d", partial.GPUWeights, partial.CPUWeights)
+	// With gpu_layers = block count the output layer is offloaded and layer 0
+	// stays on the CPU, matching llama.cpp's last-N-of-block+1 placement.
+	blocks := EstimateVRAM(m, file, 0, 4, 0, "f16", "f16")
+	wantGPU := 3*blockPerLayer + outputBytes
+	wantCPU := blockPerLayer + inputBytes
+	if blocks.GPUWeights != wantGPU || blocks.CPUWeights != wantCPU {
+		t.Fatalf("block-count offload = %d/%d, want %d/%d", blocks.GPUWeights, blocks.CPUWeights, wantGPU, wantCPU)
 	}
+
+	// gpu_layers = 1 offloads only the output layer.
+	output := EstimateVRAM(m, file, 0, 1, 0, "f16", "f16")
+	if output.GPUWeights != outputBytes || output.CPUWeights != file-outputBytes {
+		t.Fatalf("output-only offload = %d/%d", output.GPUWeights, output.CPUWeights)
+	}
+
+	// Moving experts from layers that already live on the CPU changes nothing.
+	partial := EstimateVRAM(m, file, 0, 2, 0, "f16", "f16")
 	if moved := EstimateVRAM(m, file, 0, 2, 1, "f16", "f16"); moved.GPUWeights != partial.GPUWeights {
 		t.Fatalf("moving a CPU layer's experts changed VRAM: %+v", moved)
 	}
-	third := EstimateVRAM(m, file, 0, 2, 3, "f16", "f16")
-	if third.GPUWeights != partial.GPUWeights-expertPerLayer {
-		t.Fatalf("n_cpu_moe=3 gpu = %d", third.GPUWeights)
+	// Offloading the last block (gpu_layers=2) and moving its experts does.
+	tail := EstimateVRAM(m, file, 0, 2, 4, "f16", "f16")
+	if tail.GPUWeights != blockPerLayer+outputBytes-expertPerLayer {
+		t.Fatalf("n_cpu_moe=4 gpu = %d", tail.GPUWeights)
 	}
 }
 
@@ -453,6 +469,235 @@ func TestEstimateVRAMUnknownTensorType(t *testing.T) {
 	e := EstimateVRAM(m, 300, 0, 1, 0, "f16", "f16")
 	if !e.Approximate || e.GPUWeights != 300 {
 		t.Fatalf("unknown-type fallback = %+v", e)
+	}
+}
+
+// gemma4Fixture builds a four-layer Gemma 4 style model: two SWA layers, two
+// full-attention layers, and one trailing layer that shares another layer's KV
+// cache. The input embedding is intentionally larger than a block to exercise
+// tensor-aware placement.
+func gemma4Fixture(t *testing.T) ([]testKV, []testTensor) {
+	t.Helper()
+	kvs := []testKV{
+		{"general.architecture", 8, "gemma4"},
+		{"gemma4.block_count", 4, uint32(4)},
+		{"gemma4.embedding_length", 4, uint32(16)},
+		{"gemma4.attention.head_count", 4, uint32(4)},
+		{"gemma4.attention.head_count_kv", 4, uint32(2)},
+		{"gemma4.attention.key_length", 4, uint32(4)},
+		{"gemma4.attention.value_length", 4, uint32(4)},
+		{"gemma4.context_length", 4, uint32(65536)},
+		{"gemma4.attention.sliding_window", 4, uint32(512)},
+		{"gemma4.attention.sliding_window_pattern", 9, []uint32{1, 1, 0, 0}},
+		{"gemma4.attention.shared_kv_layers", 4, uint32(1)},
+		{"gemma4.attention.key_length_swa", 4, uint32(2)},
+		{"gemma4.attention.value_length_swa", 4, uint32(2)},
+	}
+	tensors := []testTensor{
+		{name: "token_embd.weight", dims: []uint64{16, 64}, typ: 0},
+		{name: "per_layer_token_embd.weight", dims: []uint64{16, 64}, typ: 0},
+		{name: "output_norm.weight", dims: []uint64{16}, typ: 0},
+		{name: "output.weight", dims: []uint64{16, 64}, typ: 0},
+		{name: "per_layer_model_proj.weight", dims: []uint64{16, 16}, typ: 0},
+	}
+	for l := 0; l < 4; l++ {
+		tensors = append(tensors, testTensor{
+			name: fmt.Sprintf("blk.%d.attn_q.weight", l),
+			dims: []uint64{16, 16},
+			typ:  0,
+		})
+	}
+	return kvs, tensors
+}
+
+func TestReadMetaGemma4SWA(t *testing.T) {
+	kvs, tensors := gemma4Fixture(t)
+	path := writeTestGGUF(t, 3, kvs, tensors...)
+	m, err := ReadMeta(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.SlidingWindow != 512 || m.SharedKVLayers != 1 {
+		t.Fatalf("meta = %+v", m)
+	}
+	if m.KeyLengthSWA != 2 || m.ValueLengthSWA != 2 {
+		t.Fatalf("swa lengths = %d/%d", m.KeyLengthSWA, m.ValueLengthSWA)
+	}
+	if len(m.SlidingWindowPattern) != 4 {
+		t.Fatalf("pattern = %v", m.SlidingWindowPattern)
+	}
+	for i, want := range []bool{true, true, false, false} {
+		if got := m.SlidingWindowLayer(i); got != want {
+			t.Fatalf("SlidingWindowLayer(%d) = %v, want %v", i, got, want)
+		}
+	}
+	if m.KVLayers() != 3 {
+		t.Fatalf("kv layers = %d", m.KVLayers())
+	}
+	// Two SWA layers at 512 tokens and 2+2 head dims, then one full layer at
+	// 65k with 4+4 dims; the shared layer adds nothing.
+	want := uint64(2*512*2*(2*2+2*2) + 65536*2*(4*2+4*2))
+	if got := m.KVBytes(65536, "f16", "f16"); got != want {
+		t.Fatalf("kv = %d, want %d", got, want)
+	}
+}
+
+func TestEstimateVRAMGemma4Placement(t *testing.T) {
+	kvs, tensors := gemma4Fixture(t)
+	path := writeTestGGUF(t, 3, kvs, tensors...)
+	m, err := ReadMeta(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const file = uint64(17472)
+	const inputBytes = uint64(8192)
+	const outputBytes = uint64(4160)
+	const globalBytes = uint64(1024)
+	const blockBytes = uint64(4096)
+
+	all := EstimateVRAM(m, file, 0, 5, 0, "f16", "f16")
+	if all.GPUWeights != blockBytes+outputBytes+globalBytes || all.CPUWeights != inputBytes {
+		t.Fatalf("all offload = %d/%d", all.GPUWeights, all.CPUWeights)
+	}
+	if all.Approximate {
+		t.Fatalf("fixture should be exact: %+v", all)
+	}
+
+	// gpu_layers = block count leaves block 0 and repeating tensors on the CPU
+	// while still offloading the output layer.
+	blocks := EstimateVRAM(m, file, 0, 4, 0, "f16", "f16")
+	wantGPU := 3*(blockBytes/4) + outputBytes
+	wantCPU := (blockBytes / 4) + globalBytes + inputBytes
+	if blocks.GPUWeights != wantGPU || blocks.CPUWeights != wantCPU {
+		t.Fatalf("block-count offload = %d/%d, want %d/%d", blocks.GPUWeights, blocks.CPUWeights, wantGPU, wantCPU)
+	}
+
+	// One layer means the output layer alone, matching llama.cpp.
+	output := EstimateVRAM(m, file, 0, 1, 0, "f16", "f16")
+	if output.GPUWeights != outputBytes || output.CPUWeights != file-outputBytes {
+		t.Fatalf("output-only offload = %d/%d", output.GPUWeights, output.CPUWeights)
+	}
+
+	none := EstimateVRAM(m, file, 0, 0, 0, "f16", "f16")
+	if none.GPUWeights != 0 || none.CPUWeights != file {
+		t.Fatalf("no offload = %d/%d", none.GPUWeights, none.CPUWeights)
+	}
+
+	// Values beyond block count + 1 and negative both mean everything.
+	for _, layers := range []int{6, 999, -1} {
+		e := EstimateVRAM(m, file, 0, layers, 0, "f16", "f16")
+		if e.GPUWeights != all.GPUWeights || e.CPUWeights != all.CPUWeights {
+			t.Fatalf("gpu_layers=%d = %d/%d, want %d/%d", layers, e.GPUWeights, e.CPUWeights, all.GPUWeights, all.CPUWeights)
+		}
+	}
+}
+
+func TestEstimateVRAMGemma4KV(t *testing.T) {
+	kvs, tensors := gemma4Fixture(t)
+	path := writeTestGGUF(t, 3, kvs, tensors...)
+	m, err := ReadMeta(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const file = uint64(17472)
+	e := EstimateVRAM(m, file, 65536, 5, 0, "f16", "f16")
+	want := uint64(2*512*2*(2*2+2*2) + 65536*2*(4*2+4*2))
+	if e.KVBytes != want {
+		t.Fatalf("kv = %d, want %d", e.KVBytes, want)
+	}
+	// Short contexts do not need the full window.
+	short := EstimateVRAM(m, file, 256, 5, 0, "f16", "f16")
+	wantShort := uint64(2*256*2*(2*2+2*2) + 256*2*(4*2+4*2))
+	if short.KVBytes != wantShort {
+		t.Fatalf("short kv = %d, want %d", short.KVBytes, wantShort)
+	}
+}
+
+func TestReadMetaScalarSWAPattern(t *testing.T) {
+	path := writeTestGGUF(t, 3, []testKV{
+		{"general.architecture", 8, "gemma3"},
+		{"gemma3.block_count", 4, uint32(6)},
+		{"gemma3.embedding_length", 4, uint32(16)},
+		{"gemma3.attention.head_count", 4, uint32(4)},
+		{"gemma3.attention.key_length", 4, uint32(4)},
+		{"gemma3.attention.value_length", 4, uint32(4)},
+		{"gemma3.attention.sliding_window", 4, uint32(1024)},
+	})
+	m, err := ReadMeta(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !m.SlidingWindowPatternSet || m.SlidingWindowPatternN != 6 {
+		t.Fatalf("default pattern = %+v", m)
+	}
+	for i := 0; i < 6; i++ {
+		want := i%6 != 5
+		if got := m.SlidingWindowLayer(i); got != want {
+			t.Fatalf("SlidingWindowLayer(%d) = %v, want %v", i, got, want)
+		}
+	}
+}
+
+func TestReadMetaUnmodeledSWAPattern(t *testing.T) {
+	path := writeTestGGUF(t, 3, []testKV{
+		{"general.architecture", 8, "mystery"},
+		{"mystery.block_count", 4, uint32(2)},
+		{"mystery.embedding_length", 4, uint32(16)},
+		{"mystery.attention.head_count", 4, uint32(4)},
+		{"mystery.attention.key_length", 4, uint32(4)},
+		{"mystery.attention.value_length", 4, uint32(4)},
+		{"mystery.attention.sliding_window", 4, uint32(512)},
+	})
+	m, err := ReadMeta(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !m.Approximate || !contains(m.ApproximateReasons, "sliding-window layer pattern is not modelled") {
+		t.Fatalf("unmodeled pattern = %+v", m)
+	}
+}
+
+func TestEstimateVRAMUnknownPlacement(t *testing.T) {
+	kvs, tensors := gemma4Fixture(t)
+	tensors = append(tensors, testTensor{name: "mystery.weight", dims: []uint64{1}, typ: 0})
+	path := writeTestGGUF(t, 3, kvs, tensors...)
+	m, err := ReadMeta(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e := EstimateVRAM(m, 17476, 0, 4, 0, "f16", "f16")
+	if !e.Approximate {
+		t.Fatalf("unknown placement should be approximate: %+v", e)
+	}
+	if !contains(e.Reasons, "unknown tensor placement: mystery.weight") {
+		t.Fatalf("reasons = %v", e.Reasons)
+	}
+	// The fallback keeps the conservative file-size split.
+	if e.GPUWeights != 17476 || e.CPUWeights != 0 {
+		t.Fatalf("fallback split = %d/%d", e.GPUWeights, e.CPUWeights)
+	}
+}
+
+func TestTensorClassOf(t *testing.T) {
+	cases := []struct {
+		arch string
+		name string
+		want tensorClass
+	}{
+		{"gemma4", "token_embd.weight", tensorInput},
+		{"gemma4", "token_embd_norm.weight", tensorGlobal},
+		{"lfm2", "token_embd_norm.weight", tensorOutput},
+		{"gemma4", "output.weight", tensorOutput},
+		{"gemma4", "output_norm.weight", tensorOutput},
+		{"gemma4", "per_layer_model_proj.weight", tensorGlobal},
+		{"gemma4", "rope_freqs.weight", tensorGlobal},
+		{"gemma4", "blk.0.attn_q.weight", tensorUnknown}, // handled as a block earlier
+		{"gemma4", "mystery.weight", tensorUnknown},
+	}
+	for _, tc := range cases {
+		if got := tensorClassOf(tc.arch, tc.name); got != tc.want {
+			t.Fatalf("tensorClassOf(%q, %q) = %v, want %v", tc.arch, tc.name, got, tc.want)
+		}
 	}
 }
 
