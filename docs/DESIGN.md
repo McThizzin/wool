@@ -61,6 +61,7 @@ supported. The router itself owns the lifecycle of the models it loads.
 | `internal/daemon` | detached process start/stop, state files, liveness checks, ports, log tailing |
 | `internal/llamaserver` | single-server argv, router argv, `models.ini` generation, HTTP client |
 | `internal/gguf` | GGUF metadata reader and VRAM estimate |
+| `internal/fit` | auto-fit solver, context search, fallback ranking and size parsing |
 | `internal/measure` | observed-VRAM JSONL store and post-launch capture |
 | `internal/sysinfo` | Linux `/proc` + AMD sysfs telemetry and graph history |
 | `internal/doctor` | readiness checks and report rendering |
@@ -442,6 +443,7 @@ budget is cached by GPU total/used, reserve and the running server PID, so the
 | `L` | focus logs |
 | `f` | toggle log follow |
 | `e` | edit the selected preset or model |
+| `F` | recommend settings that fit VRAM in the editor |
 | `d` | run doctor |
 | `D` | show what the selected target changes |
 | `t` | cycle theme |
@@ -464,6 +466,7 @@ completion for command names and model/preset IDs.
 /unload ID              unload a router model
 /reload                 reload config.toml
 /edit                   open the option editor
+/fit                    open the option editor and fit overlay
 /doctor                 run readiness checks
 /theme [name]           cycle or set a theme
 /tab NAME               dashboard, models, presets, router, hardware, logs
@@ -484,6 +487,14 @@ field owned by the current table calls `config.RemoveValue`, so the value
 falls back to the next layer. Fields from a lower layer cannot be reset from
 this table. Because the editor writes the file, edits are visible to the CLI
 and survive a restart.
+
+`F` opens the fit overlay for the current draft. It solves against the live
+budget, lists the recommendation and alternatives, and shows each estimate
+breakdown, headroom, limiting term and changed fields. `enter` applies the
+selection to the in-memory draft and marks it dirty; the normal field edits are
+suspended while a fit draft is pending. `ctrl+s` writes only the changed
+fit-controlled options to the target's existing table; `esc` discards the draft
+and restores the saved values. No preset is created.
 
 ## Hardware telemetry
 
@@ -599,6 +610,46 @@ estimate from the draft value while typing; it does not write the file until
 bytes between the GPU and CPU terms when tensor metadata is available; when it
 is not, the preview says the estimate is approximate and why.
 
+## Auto-fit solver
+
+`internal/fit.Solve` inverts `EstimateVRAM`: given a budget it finds the largest
+context that fits. The solver searches a 256-token grid between the 2048-token
+minimum and the model's native context, using `gguf.EstimateVRAM` as the cost
+function. Every recommendation it returns satisfies
+`estimate.Total <= budget.Available`; the solver never reports an over-budget
+configuration as a recommendation.
+
+The requested settings are evaluated first. If they can hold at least the
+minimum context, that candidate wins even when a fallback would allow more
+context. Otherwise the solver steps through fallback tiers in this order:
+
+1. lower-precision symmetric KV cache types, down to `q4_0`/`iq4_nl`;
+2. CPU offload: `n_cpu_moe` at 25/50/75/100% of the block count for MoE models,
+   then `gpu_layers` at 75/50/25% of `block_count + 1` (all-CPU only as a last
+   resort for MoE);
+3. the most compressed cache combined with the offload placements.
+
+Candidates are deduplicated and ranked deterministically: requested settings
+before fallbacks, then larger context, more GPU layers, less `n_cpu_moe`, and a
+less compressed cache at the same context. `Result` carries the primary
+recommendation, up to five alternatives, the estimate breakdown, headroom, the
+limiting term, the changed fields and short notes. Each recommendation also
+reports whether the estimate is approximate and why.
+
+The CLI accepts `--vram SIZE` as the total card size. The solver subtracts
+`router.memory_margin_mib` and deliberately ignores live usage from other
+processes, so repeated runs are deterministic. Without `--vram`, the budget
+comes from live telemetry and excludes a running standalone server's own
+allocation, matching the dashboard and doctor. `fitBudget` maps both paths onto
+the same `gguf.Budget`.
+
+The editor's `F` (or `/fit`) opens a picker over the recommendation and its
+alternatives. `enter` copies `ctx`, `gpu_layers`, `n_cpu_moe`,
+`cache_type_k` and `cache_type_v` into the in-memory draft and recomputes the
+preview; `ctrl+s` writes only the values that differ from the saved config;
+`esc` discards the draft. The solver never writes TOML and does not create a
+preset. Preset creation is M2.4.
+
 ## Observed measurements
 
 `internal/measure` keeps one append-only JSONL record per successful launch at
@@ -643,6 +694,7 @@ overlay.
 ```text
 wool [--config PATH]                 open the TUI
 wool doctor [--json]                 check binary, models and VRAM fit
+wool fit TARGET [options]            recommend settings that fit a VRAM budget
 wool list [--json]                   list models and presets
 wool run TARGET [options]            start a model or preset detached
 wool stop [server|router|all]        stop detached servers
@@ -657,16 +709,19 @@ wool version
 ```
 
 `run` options: `--dry-run`, `--restart`, `--port N`, `--no-wait`.
-`router start` accepts the same options. Unless `--no-wait` or `--dry-run` is
-used, `wool run` records one observation after health, so the command stays
-alive through the 5s/15s settle window.
+`fit` options: `--vram SIZE`, `--cache-type TYPE`, `--gpu-layers N`,
+`--n-cpu-moe N`, `--json`.
+`router start` accepts the same options as `run`. Unless `--no-wait` or
+`--dry-run` is used, `wool run` records one observation after health, so the
+command stays alive through the 5s/15s settle window.
 
 ## Testing
 
 - `go test ./...` covers config parsing/merging/edits, provenance, key removal
-  and effective-config diffs, GGUF metadata and estimates, argv/INI generation,
-  router metrics parsing, daemon lifecycle and PID validation, sysinfo parsing,
-  and TUI rendering at multiple sizes.
+  and effective-config diffs, GGUF metadata and estimates, dense/hybrid/MoE
+  auto-fit solving and fallback ranking, argv/INI generation, router metrics
+  parsing, daemon lifecycle and PID validation, sysinfo parsing, and TUI
+  rendering at multiple sizes.
 - One view test renders every tab at 120x40, 100x30, 80x24, 60x20 and 40x12
   and asserts that no line exceeds the terminal width.
 - Editor tests write to a temporary config and reload it to verify the TOML
@@ -704,6 +759,9 @@ criteria. The limitations below are the current state, not the plan.
   instances. The daemon layer already uses names and can grow this later.
 - The editor can reset launch-option overrides, but not `model`, `path`,
   `alias` or `extra` keys.
+- `wool fit` is advisory and inherits the estimator's approximation. It never
+  recommends an over-budget configuration, but it does not create presets;
+  applying a recommendation edits the selected target's existing options.
 - There is no automatic restart/supervision of the standalone server in v1.
   Router-managed models are supervised by `llama-server` itself.
 - Logs are tailed from disk on a timer rather than streamed; this is simple

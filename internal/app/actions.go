@@ -359,6 +359,7 @@ func (m *Model) showHelp() {
 		"  l / u                  load / unload the selected router model",
 		"  L                      focus the logs tab (enter toggles target)",
 		"  e                      edit the selected preset/model options",
+		"  F                      recommend settings that fit VRAM",
 		"  D                      show what the selected target changes",
 		"  d                      run doctor",
 		"  t                      next theme",
@@ -376,6 +377,7 @@ func (m *Model) showHelp() {
 		"  /unload ID             ask the router to unload a model",
 		"  /reload                reload config.toml",
 		"  /edit                  open the option editor",
+		"  /fit                   open the option editor and fit overlay",
 		"  /doctor                run readiness checks",
 		"  /theme [name]          switch theme",
 		"  /tab NAME              jump to dashboard, models, presets, router, hardware, logs",
@@ -469,6 +471,13 @@ func (m *Model) runCommand(line string) (tea.Cmd, bool) {
 		return m.runDoctor(), true
 	case "edit":
 		m.openEditor()
+	case "fit":
+		if m.editor == nil {
+			m.openEditor()
+		}
+		if m.editor != nil {
+			m.openFitOverlay()
+		}
 	case "logs", "log":
 		if len(args) > 0 {
 			switch args[0] {

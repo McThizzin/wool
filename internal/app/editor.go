@@ -9,6 +9,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"wool/internal/config"
+	"wool/internal/fit"
 	"wool/internal/gguf"
 	"wool/internal/ui"
 )
@@ -40,12 +41,23 @@ type editor struct {
 	err     string
 
 	base    config.Resolved
+	draft   config.Resolved
+	dirty   bool
 	baseEst gguf.Estimate
 	meta    gguf.Meta
 	size    uint64
 	hasMeta bool
 	metaErr string
 	preview editorPreview
+	fit     *fitOverlay
+}
+
+// fitOverlay is the editor's unsaved fit recommendation picker.
+type fitOverlay struct {
+	result fit.Result
+	recs   []fit.Recommendation
+	sel    int
+	err    string
 }
 
 // editorPreview is the unsaved estimate for the draft value being typed.
@@ -116,6 +128,7 @@ func (m *Model) openEditor() {
 		e.fields[i].source = src
 	}
 	e.base = r
+	e.draft = r
 	if meta, err := m.metaFor(r.ModelPath); err != nil {
 		e.metaErr = err.Error()
 	} else {
@@ -189,6 +202,232 @@ func (m *Model) refreshPreview() {
 	e.preview = m.previewFor(e, draft)
 }
 
+func fitSettings(r config.Resolved) fit.Settings {
+	return fit.Settings{
+		Ctx:        r.Ctx,
+		GPULayers:  r.GPULayers,
+		NCPUMoE:    r.NCPUMoE,
+		CacheTypeK: r.CacheTypeK,
+		CacheTypeV: r.CacheTypeV,
+	}
+}
+
+// openFitOverlay solves against the live budget using the editor's current
+// draft. The result is only a picker until the user applies it.
+func (m *Model) openFitOverlay() {
+	e := m.editor
+	if e == nil {
+		return
+	}
+	if !e.hasMeta {
+		err := e.metaErr
+		if err == "" {
+			err = "model metadata unreadable"
+		}
+		e.fit = &fitOverlay{err: err}
+		return
+	}
+	budget := m.budget()
+	if !budget.Known {
+		e.fit = &fitOverlay{err: "VRAM budget unknown; no GPU VRAM detected"}
+		return
+	}
+	res, err := fit.Solve(fit.Request{
+		ModelID:   e.base.ModelID,
+		ModelPath: e.base.ModelPath,
+		Meta:      e.meta,
+		FileBytes: e.size,
+		Budget:    budget,
+		Settings:  fitSettings(e.draft),
+	})
+	if err != nil {
+		e.fit = &fitOverlay{err: err.Error()}
+		return
+	}
+	recs := append([]fit.Recommendation{res.Recommendation}, res.Alternatives...)
+	e.fit = &fitOverlay{result: res, recs: recs}
+}
+
+func (m *Model) updateFitOverlay(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	e := m.editor
+	f := e.fit
+	if f == nil {
+		return m, nil
+	}
+	switch msg.String() {
+	case "esc", "q":
+		e.fit = nil
+	case "j", "down":
+		f.sel = clamp(f.sel+1, 0, maxInt(0, len(f.recs)-1))
+	case "k", "up":
+		f.sel = clamp(f.sel-1, 0, maxInt(0, len(f.recs)-1))
+	case "g", "home":
+		f.sel = 0
+	case "G", "end":
+		f.sel = maxInt(0, len(f.recs)-1)
+	case "enter", " ":
+		if f.err != "" || len(f.recs) == 0 {
+			return m, nil
+		}
+		m.applyFit(f.recs[f.sel])
+		e.fit = nil
+		m.setToast("fit applied to draft · ctrl+s saves")
+	case "ctrl+c":
+		return m, tea.Quit
+	}
+	return m, nil
+}
+
+// applyFit updates the editor's in-memory draft. Nothing is written until the
+// user saves.
+func (m *Model) applyFit(rec fit.Recommendation) {
+	e := m.editor
+	e.draft.Ctx = rec.Ctx
+	e.draft.GPULayers = rec.GPULayers
+	e.draft.NCPUMoE = rec.NCPUMoE
+	e.draft.CacheTypeK = rec.CacheTypeK
+	e.draft.CacheTypeV = rec.CacheTypeV
+	for i := range e.fields {
+		switch e.fields[i].key {
+		case "ctx":
+			e.fields[i].value = strconv.Itoa(rec.Ctx)
+		case "gpu_layers":
+			e.fields[i].value = strconv.Itoa(rec.GPULayers)
+		case "n_cpu_moe":
+			e.fields[i].value = strconv.Itoa(rec.NCPUMoE)
+		case "cache_type_k":
+			e.fields[i].value = quoteTOML(rec.CacheTypeK)
+		case "cache_type_v":
+			e.fields[i].value = quoteTOML(rec.CacheTypeV)
+		}
+	}
+	e.dirty = true
+	e.preview = m.previewFor(e, e.draft)
+}
+
+// saveFitDraft writes only the fit-controlled options that differ from the
+// saved configuration. It does not create or edit presets.
+func (m *Model) saveFitDraft() {
+	e := m.editor
+	if e == nil {
+		return
+	}
+	if !e.dirty {
+		m.setToast("no draft changes")
+		return
+	}
+	var writes []struct{ key, value string }
+	add := func(key, value string) {
+		writes = append(writes, struct{ key, value string }{key, value})
+	}
+	if e.draft.Ctx != e.base.Ctx {
+		add("ctx", strconv.Itoa(e.draft.Ctx))
+	}
+	if e.draft.GPULayers != e.base.GPULayers {
+		add("gpu_layers", strconv.Itoa(e.draft.GPULayers))
+	}
+	if e.draft.NCPUMoE != e.base.NCPUMoE {
+		add("n_cpu_moe", strconv.Itoa(e.draft.NCPUMoE))
+	}
+	if e.draft.CacheTypeK != e.base.CacheTypeK {
+		add("cache_type_k", quoteTOML(e.draft.CacheTypeK))
+	}
+	if e.draft.CacheTypeV != e.base.CacheTypeV {
+		add("cache_type_v", quoteTOML(e.draft.CacheTypeV))
+	}
+	if len(writes) == 0 {
+		e.dirty = false
+		m.setToast("no draft changes")
+		return
+	}
+	for _, w := range writes {
+		if err := config.SetValue(e.path, e.table, w.key, w.value); err != nil {
+			e.err = err.Error()
+			return
+		}
+	}
+	table, sel := e.table, e.sel
+	m.reloadConfig()
+	m.openEditor()
+	if m.editor != nil {
+		m.editor.table = table
+		m.editor.sel = clamp(sel, 0, maxInt(0, len(m.editor.fields)-1))
+	}
+	m.setToast("saved fit draft")
+}
+
+func (m *Model) editorFitView() string {
+	st := m.render.Styles
+	e := m.editor
+	w := clamp(m.width-8, 40, 92)
+	h := m.height - 2
+	if h < 10 {
+		h = 10
+	}
+	var body []string
+	f := e.fit
+	if f.err != "" {
+		body = append(body, st.Warn.Render(ui.Fit("fit: "+f.err, w-4)))
+		body = append(body, st.Muted.Render("esc close"))
+	} else {
+		res := f.result
+		body = append(body, st.Muted.Render(ui.Fit(fmt.Sprintf(
+			"budget %s available · native %d · min %d",
+			ui.HumanBytes(res.Budget.Available), res.NativeContext, res.MinimumContext), w-4)))
+		body = append(body, "")
+		for i, rec := range f.recs {
+			mark := " "
+			if i == f.sel {
+				mark = "▸"
+			}
+			fallback := ""
+			if rec.Fallback != "" {
+				fallback = " · " + rec.Fallback
+			}
+			headroom := rec.Headroom
+			if headroom < 0 {
+				headroom = 0
+			}
+			line := fmt.Sprintf("%s %d. ctx %-7d gpu %-3d moe %-3d %s/%s · headroom %s%s",
+				mark, rec.Rank, rec.Ctx, rec.GPULayers, rec.NCPUMoE,
+				rec.CacheTypeK, rec.CacheTypeV, ui.HumanBytes(uint64(headroom)), fallback)
+			if i == f.sel {
+				body = append(body, st.Selected.Render(ui.Fit(line, w-4)))
+			} else {
+				body = append(body, ui.Fit(line, w-4))
+			}
+		}
+		if len(f.recs) > 0 {
+			rec := f.recs[f.sel]
+			body = append(body, "")
+			body = append(body, st.Muted.Render(ui.Fit(fmt.Sprintf(
+				"gpu %s + kv %s + overhead %s = %s · limit %s",
+				ui.HumanBytes(rec.Estimate.GPUWeights), ui.HumanBytes(rec.Estimate.KVBytes),
+				ui.HumanBytes(rec.Estimate.Overhead), ui.HumanBytes(rec.Estimate.Total), rec.Limiting), w-4)))
+			for _, change := range rec.Changes {
+				body = append(body, st.Muted.Render(ui.Fit("  "+change, w-4)))
+			}
+			for _, note := range res.Notes {
+				body = append(body, st.Warn.Render(ui.Fit("note: "+note, w-4)))
+			}
+			body = append(body, st.Muted.Render("enter apply to draft · j/k select · esc close"))
+		} else {
+			body = append(body, st.Warn.Render("no recommendation"))
+		}
+	}
+	if len(body) > h-2 {
+		body = body[:h-2]
+	}
+	panel := m.render.Panel("fit · "+e.title, "unsaved recommendation · enter applies", body, w, h, true)
+	lines := strings.Split(panel, "\n")
+	left := clamp((m.width-w)/2, 0, m.width)
+	var out []string
+	for _, l := range lines {
+		out = append(out, strings.Repeat(" ", left)+l)
+	}
+	return strings.Join(out, "\n")
+}
+
 // editorPreviewLines renders the unsaved estimate, its headroom and the
 // limiting term. It is capped at three lines so the field list stays usable.
 func (m *Model) editorPreviewLines(w int) []string {
@@ -246,6 +485,9 @@ func fmtFloat(f float64) string {
 }
 
 func (m *Model) editorView() string {
+	if m.editor != nil && m.editor.fit != nil {
+		return m.editorFitView()
+	}
 	st := m.render.Styles
 	e := m.editor
 	w := clamp(m.width-8, 40, 72)
@@ -266,7 +508,11 @@ func (m *Model) editorView() string {
 		end = len(e.fields)
 	}
 	var body []string
-	body = append(body, st.Muted.Render("values are written to "+e.path))
+	header := "values are written to " + e.path
+	if e.dirty {
+		header = "unsaved fit draft · ctrl+s writes " + e.path
+	}
+	body = append(body, st.Muted.Render(header))
 	for i := start; i < end; i++ {
 		f := e.fields[i]
 		mark := " "
@@ -286,7 +532,11 @@ func (m *Model) editorView() string {
 	if len(body) > bodyH {
 		body = body[:bodyH]
 	}
-	panel := m.render.Panel(e.title, "enter edit · backspace reset · esc close", body, w, h, true)
+	hint := "enter edit · backspace reset · F fit · esc close"
+	if e.dirty {
+		hint = "fit draft · ctrl+s save · esc discard"
+	}
+	panel := m.render.Panel(e.title, hint, body, w, h, true)
 	lines := strings.Split(panel, "\n")
 	left := clamp((m.width-w)/2, 0, m.width)
 	var out []string
@@ -306,6 +556,9 @@ func (m *Model) editorView() string {
 // updateEditor handles keys while the editor overlay is open.
 func (m *Model) updateEditor(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	e := m.editor
+	if e.fit != nil {
+		return m.updateFitOverlay(msg)
+	}
 	if e.editing {
 		switch msg.String() {
 		case "esc":
@@ -344,7 +597,14 @@ func (m *Model) updateEditor(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	switch msg.String() {
 	case "esc", "q":
+		if e.dirty {
+			m.setToast("fit draft discarded")
+		}
 		m.editor = nil
+	case "F":
+		m.openFitOverlay()
+	case "ctrl+s":
+		m.saveFitDraft()
 	case "j", "down":
 		e.sel = clamp(e.sel+1, 0, len(e.fields)-1)
 		e.ensureScroll()
@@ -358,6 +618,10 @@ func (m *Model) updateEditor(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		e.sel = len(e.fields) - 1
 		e.ensureScroll()
 	case "backspace", "delete":
+		if e.dirty {
+			m.setToast("save the fit draft with ctrl+s or press esc to discard it")
+			return m, nil
+		}
 		f := e.fields[e.sel]
 		if f.source.Layer != e.table {
 			m.setToast(f.label + " comes from " + f.source.Source + "; nothing to reset")
@@ -382,6 +646,10 @@ func (m *Model) updateEditor(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.setToast("reset " + f.label + " to " + next)
 		return m, nil
 	case "enter", " ":
+		if e.dirty {
+			m.setToast("save the fit draft with ctrl+s or press esc to discard it")
+			return m, nil
+		}
 		f := e.fields[e.sel]
 		if f.kind == "bool" {
 			next := "true"

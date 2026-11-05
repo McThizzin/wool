@@ -10,7 +10,7 @@ import (
 
 var commandNames = []string{
 	"start", "restart", "stop", "router", "load", "unload", "reload",
-	"edit", "doctor", "theme", "tab", "logs", "help", "quit",
+	"edit", "fit", "doctor", "theme", "tab", "logs", "help", "quit",
 }
 
 func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -111,6 +111,13 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.setTab(tabLogs)
 	case "e":
 		m.openEditor()
+	case "F":
+		if m.editor == nil {
+			m.openEditor()
+		}
+		if m.editor != nil {
+			m.openFitOverlay()
+		}
 	case "d":
 		return m, m.runDoctor()
 	case "D":

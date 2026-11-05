@@ -300,6 +300,78 @@ func TestEditorPreviewTracksDraftAndDiscards(t *testing.T) {
 	}
 }
 
+func TestEditorFitAppliesToDraftOnly(t *testing.T) {
+	m := testModel(t)
+	m.setTab(tabPresets)
+	m.presetSel = indexOf(m.presets, "gemma-heretic-32k")
+	if m.presetSel < 0 {
+		t.Fatal("example preset missing")
+	}
+	m.openEditor()
+	if m.editor == nil {
+		t.Fatal("editor did not open")
+	}
+	e := m.editor
+	e.meta = gguf.Meta{
+		Architecture: "x", BlockCount: 8, Embedding: 8, HeadCount: 2,
+		HeadCountKV: []int{1, 1, 1, 1, 1, 1, 1, 1}, KeyLength: 4, ValueLength: 4,
+		CtxTrain: 131072,
+	}
+	e.size = 1 << 30
+	e.hasMeta = true
+	e.metaErr = ""
+	e.baseEst = gguf.EstimateVRAM(e.meta, e.size, e.base.Ctx, e.base.GPULayers, e.base.NCPUMoE, e.base.CacheTypeK, e.base.CacheTypeV)
+	e.preview = m.previewFor(e, e.base)
+	if e.base.Ctx >= e.meta.CtxTrain {
+		t.Fatalf("base ctx %d is not below native %d", e.base.Ctx, e.meta.CtxTrain)
+	}
+
+	before, err := os.ReadFile(m.cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.openFitOverlay()
+	if e.fit == nil || e.fit.err != "" {
+		t.Fatalf("fit overlay = %+v", e.fit)
+	}
+	if len(e.fit.recs) == 0 {
+		t.Fatal("fit returned no recommendations")
+	}
+	rec := e.fit.recs[0]
+	if rec.Ctx != e.meta.CtxTrain {
+		t.Fatalf("ctx = %d, want native %d", rec.Ctx, e.meta.CtxTrain)
+	}
+
+	if _, _ = m.updateEditor(tea.KeyMsg{Type: tea.KeyEnter}); e.fit != nil {
+		t.Fatal("fit overlay did not close after apply")
+	}
+	if !e.dirty || e.draft.Ctx != rec.Ctx {
+		t.Fatalf("draft = %+v, dirty = %v", e.draft, e.dirty)
+	}
+	after, err := os.ReadFile(m.cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(before) != string(after) {
+		t.Fatal("applying a fit wrote the config before ctrl+s")
+	}
+
+	if _, _ = m.updateEditor(tea.KeyMsg{Type: tea.KeyCtrlS}); m.editor == nil {
+		t.Fatal("editor closed after saving the fit draft")
+	}
+	if m.editor.base.Ctx != rec.Ctx {
+		t.Fatalf("saved ctx = %d, want %d", m.editor.base.Ctx, rec.Ctx)
+	}
+	cfg, err := config.Load(m.cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := cfg.Presets["gemma-heretic-32k"]
+	if p.Options.Ctx == nil || *p.Options.Ctx != rec.Ctx {
+		t.Fatalf("saved preset ctx = %v, want %d", p.Options.Ctx, rec.Ctx)
+	}
+}
+
 func TestEditorShowsSourcesAndResets(t *testing.T) {
 	m := testModel(t)
 	m.setTab(tabPresets)

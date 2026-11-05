@@ -24,6 +24,7 @@
 - **Effective-config diff.** `wool config diff TARGET` and the TUI `D` overlay show only the launch options that differ from the model or defaults layer, with the source of each side.
 - **Full router control.** Start/stop the router, list models, load/unload, reload presets, and read per-model stats and slots.
 - **VRAM-fit estimates.** Reads GGUF metadata and the tensor table, models llama.cpp's tensor placement, Gemma-style sliding-window/shared KV, hybrid attention (Qwen3.5/Qwen3-Next), per-layer KV heads, and quantized KV cache types. The UI shows `weights + KV + overhead`, the budget after reserve and other GPU usage, headroom and the limiting term.
+- **Auto-fit recommendations.** `wool fit TARGET` binary-searches the largest context that fits the budget, capped at the model's native context. When the requested settings cannot hold a useful context it ranks fallbacks: lower KV cache precision first, then CPU offload (using `n_cpu_moe` for MoE models). Every recommendation is within budget and includes weights, KV, overhead, headroom, the limiting term and the changes it makes.
 - **Observed vs. estimate.** After a launch, `wool` records used VRAM at 5s and 15s and shows it next to the estimate with a sample count.
 - **Hardware telemetry.** CPU, RAM, AMD `amdgpu` VRAM, temperature, power, fan, and sparklines, with no extra daemon required.
 - **Preset and model editing.** Edit resolved launch options in the TUI; changes are written back to TOML with comments and ordering preserved. Changing `ctx`, cache type, `gpu_layers` or `n_cpu_moe` previews the new estimate without saving.
@@ -77,6 +78,7 @@ wool stop server
 ```text
 wool [--config PATH]                 open the TUI
 wool doctor [--json]                 check binary, models and VRAM fit
+wool fit TARGET [options]            recommend settings that fit a VRAM budget
 wool list [--json]                   list models and presets
 wool run TARGET [options]            start a model or preset detached
 wool stop [server|router|all]        stop detached servers
@@ -91,6 +93,29 @@ wool version
 ```
 
 Router start accepts `--dry-run`, `--restart`, `--port N`, and `--no-wait`.
+
+`wool fit TARGET` accepts a preset name or model ID plus `--vram SIZE`,
+`--cache-type TYPE`, `--gpu-layers N`, `--n-cpu-moe N` and `--json`. It prints
+a ranked recommendation and alternatives, the estimate breakdown, headroom,
+the limiting term and any changes from the requested settings. `--vram 7G`
+means a 7 GiB card: the solver subtracts `router.memory_margin_mib` and ignores
+live usage from other processes, so output is deterministic. Without `--vram`
+it uses the live GPU budget and excludes a running standalone server's own
+allocation.
+
+```sh
+wool fit qwen-cyber-32k --vram 8G
+wool fit lfm25-24b-a2b --vram 8G --json
+wool fit lfm3-1-7b --vram 8G --cache-type q8_0 --gpu-layers 32
+```
+
+The minimum useful context is 2048 tokens and recommendations snap to a
+256-token grid. If the requested settings cannot fit 2048 tokens, the solver
+tries lower KV cache precision, then CPU offload, then both. For MoE models it
+prefers `n_cpu_moe`; all-CPU placement is a last resort. If no combination
+fits, the command exits with an actionable error instead of returning an
+over-budget configuration. Recommendations are advisory: use `F` in the editor
+to apply one to the draft, then `ctrl+s` to save it.
 
 ## Configuration
 
@@ -181,6 +206,7 @@ Supported color keys: `border`, `accent`, `text`, `dim`, `badge_fg`, `red`, `yel
 | `L` | focus logs |
 | `f` | toggle log follow |
 | `e` | edit the selected preset or model; `backspace`/`delete` resets a row |
+| `F` | recommend settings that fit VRAM in the editor |
 | `d` | run doctor |
 | `t` | cycle theme |
 | `ctrl+r` | reload config.toml |
@@ -188,7 +214,7 @@ Supported color keys: `border`, `accent`, `text`, `dim`, `badge_fg`, `red`, `yel
 | `?` | help overlay |
 | `q` / `ctrl+c` | quit without stopping servers |
 
-Slash commands include `/start`, `/restart`, `/stop`, `/router`, `/load`, `/unload`, `/reload`, `/edit`, `/doctor`, `/theme`, `/tab`, `/logs`, `/help`, and `/quit`.
+Slash commands include `/start`, `/restart`, `/stop`, `/router`, `/load`, `/unload`, `/reload`, `/edit`, `/fit`, `/doctor`, `/theme`, `/tab`, `/logs`, `/help`, and `/quit`.
 
 ## Router mode
 
@@ -232,6 +258,8 @@ The KV cache comes from context, attention heads, cache type and the layer sched
 
 For MoE models, `n_cpu_moe = N` keeps the routed-expert tensors (`ffn_*_exps`) of the first `N` layers on the CPU; routers and shared experts stay with their layer. If the tensor table is missing, a quantisation type or tensor name is unsupported, or expert tensors cannot be identified, `wool` falls back to the file-size fraction and marks the estimate approximate. Doctor and the editor preview explain why. A fixed overhead covers compute buffers and allocator slack. The estimate is deliberately conservative and still omits unused MTP tensors and speculative decoding buffers, so it is a fit warning rather than an exact measurement.
 
+`wool fit` inverts that estimate. It searches for the largest context on a 256-token grid that fits the budget, up to the model's native context. The requested settings are tried first; when they cannot hold at least 2048 tokens, the solver steps down through cache precision, CPU offload and finally both. The result is deterministic: the same config, model file and `--vram` value produce the same ranking. In the editor, `F` opens the picker against the live budget; `enter` applies the selection to the draft, and `ctrl+s` writes only the changed `ctx`, `gpu_layers`, `n_cpu_moe`, `cache_type_k` and `cache_type_v` values. Saving a recommendation as a new preset is not part of M2.3.
+
 ## Project layout
 
 ```text
@@ -241,6 +269,7 @@ internal/config/   TOML schema, merging, path handling, config edits
 internal/daemon/   detached process lifecycle, state, ports, logs
 internal/llamaserver/ argv/INI generation and HTTP API client
 internal/gguf/     GGUF metadata reader and VRAM estimate
+internal/fit/      auto-fit solver, fallback ranking and size parsing
 internal/measure/  observed VRAM JSONL store and launch capture
 internal/sysinfo/  /proc and AMD sysfs telemetry
 internal/doctor/   readiness checks
@@ -262,7 +291,7 @@ go vet ./...
 go test -count=1 ./...
 ```
 
-Tests cover config parsing/merging/editing, effective-config diffs, GGUF metadata and tensor parsing, hybrid KV and MoE expert-offload estimation, measurement storage and capture, argv and INI generation, router metrics, daemon lifecycle and PID validation, sysinfo parsing, themes, and TUI rendering at multiple terminal sizes.
+Tests cover config parsing/merging/editing, effective-config diffs, GGUF metadata and tensor parsing, hybrid KV and MoE expert-offload estimation, dense/hybrid/MoE auto-fit solving and fallback ranking, measurement storage and capture, argv and INI generation, router metrics, daemon lifecycle and PID validation, sysinfo parsing, themes, and TUI rendering at multiple terminal sizes.
 
 ## Limitations
 
@@ -271,6 +300,8 @@ Tests cover config parsing/merging/editing, effective-config diffs, GGUF metadat
 - The editor can reset launch-option overrides, but not `model`, `path`, `alias` or `extra` keys.
 - Standalone servers are not automatically restarted; router-managed models are supervised by `llama-server` itself.
 - VRAM estimates fall back to a file-size approximation, and say so, when tensor metadata, a quantisation type or a tensor name is unsupported, or when a sliding-window layer pattern is unknown. Speculative decoding buffers are not modelled.
+- `wool fit` is advisory and inherits the estimator's approximation. It never recommends an over-budget configuration, but the recommendation is a starting point with headroom, not a guarantee.
+- `wool fit` does not create presets yet. The editor applies a recommendation to the selected target's draft; saving writes the existing target's options.
 - Observations are system-wide VRAM deltas; background GPU work makes them noisy. They are never presented as exact usage.
 
 See [`docs/DESIGN.md`](docs/DESIGN.md) for the full design, lifecycle, and config reference, and [`docs/roadmap.md`](docs/roadmap.md) for what is planned and in what order.

@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"text/tabwriter"
@@ -18,6 +19,7 @@ import (
 	"wool/internal/config"
 	"wool/internal/daemon"
 	"wool/internal/doctor"
+	"wool/internal/fit"
 	"wool/internal/gguf"
 	"wool/internal/llamaserver"
 	"wool/internal/measure"
@@ -35,6 +37,7 @@ const usageText = `wool - llama.cpp server launcher and router TUI
 Usage:
   wool [--config PATH]                 open the TUI
   wool doctor [--json]                 check binary, models and VRAM fit
+  wool fit TARGET [options]            recommend settings that fit VRAM
   wool list [--json]                   list models and presets
   wool run TARGET [options]            start a model or preset detached
   wool stop [server|router|all]        stop detached servers
@@ -55,6 +58,13 @@ TARGET is a preset name or a model name. run options:
 
 Router options are accepted after "router start": --dry-run, --restart,
 --port N, --no-wait.
+
+fit options:
+  --vram SIZE      total card size (7G, 7GiB); default is the live GPU budget
+  --cache-type T   override cache_type_k and cache_type_v
+  --gpu-layers N   override gpu_layers
+  --n-cpu-moe N    override n_cpu_moe
+  --json           print the stable machine-readable result
 
 The config defaults to ~/.config/wool/config.toml.
 `
@@ -78,6 +88,8 @@ func run(args []string) int {
 		return 0
 	case "doctor":
 		return cmdDoctor(cfgPath, rest)
+	case "fit":
+		return cmdFit(cfgPath, rest)
 	case "config":
 		return cmdConfig(cfgPath, rest)
 	case "list":
@@ -171,6 +183,280 @@ func cmdDoctor(cfgPath string, args []string) int {
 		return 1
 	}
 	return 0
+}
+
+const fitUsage = `usage: wool fit TARGET [options]
+
+options:
+  --vram SIZE      total card size (7G, 7GiB); default is the live GPU budget
+  --cache-type T   override cache_type_k and cache_type_v
+  --gpu-layers N   override gpu_layers
+  --n-cpu-moe N    override n_cpu_moe
+  --json           print the stable machine-readable result`
+
+type fitOptions struct {
+	target    string
+	vram      string
+	cacheType string
+	gpuLayers *int
+	nCPUMoE   *int
+	asJSON    bool
+}
+
+func (o *fitOptions) set(name, value string) error {
+	switch name {
+	case "--vram":
+		o.vram = value
+	case "--cache-type":
+		o.cacheType = value
+	case "--gpu-layers":
+		n, err := strconv.Atoi(value)
+		if err != nil || n < 0 {
+			return fmt.Errorf("--gpu-layers must be a non-negative integer")
+		}
+		o.gpuLayers = &n
+	case "--n-cpu-moe":
+		n, err := strconv.Atoi(value)
+		if err != nil || n < 0 {
+			return fmt.Errorf("--n-cpu-moe must be a non-negative integer")
+		}
+		o.nCPUMoE = &n
+	default:
+		return fmt.Errorf("unknown option %q", name)
+	}
+	return nil
+}
+
+func parseFitArgs(args []string) (fitOptions, error) {
+	var o fitOptions
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		switch {
+		case a == "--json":
+			o.asJSON = true
+		case a == "-h" || a == "--help":
+			return o, flag.ErrHelp
+		case a == "--vram" || a == "--cache-type" || a == "--gpu-layers" || a == "--n-cpu-moe":
+			if i+1 >= len(args) {
+				return o, fmt.Errorf("%s needs a value", a)
+			}
+			i++
+			if err := o.set(a, args[i]); err != nil {
+				return o, err
+			}
+		case strings.HasPrefix(a, "--vram="), strings.HasPrefix(a, "--cache-type="),
+			strings.HasPrefix(a, "--gpu-layers="), strings.HasPrefix(a, "--n-cpu-moe="):
+			name, value, _ := strings.Cut(a, "=")
+			if err := o.set(name, value); err != nil {
+				return o, err
+			}
+		case strings.HasPrefix(a, "-"):
+			return o, fmt.Errorf("unknown option %q", a)
+		default:
+			if o.target != "" {
+				return o, fmt.Errorf("only one TARGET is allowed")
+			}
+			o.target = a
+		}
+	}
+	if o.target == "" {
+		return o, fmt.Errorf("TARGET is required")
+	}
+	return o, nil
+}
+
+func cmdFit(cfgPath string, args []string) int {
+	opts, err := parseFitArgs(args)
+	if errors.Is(err, flag.ErrHelp) {
+		fmt.Println(fitUsage)
+		return 0
+	}
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "wool: %v\n%s\n", err, fitUsage)
+		return 2
+	}
+	cfg, err := loadConfig(cfgPath)
+	if err != nil {
+		printConfigError(cfgPath, err)
+		return 1
+	}
+	r, _, kind, err := resolveNamedTarget(cfg, opts.target)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "wool: %v\n", err)
+		return 1
+	}
+	info, err := os.Stat(r.ModelPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "wool: model file for %s is missing: %s\nRun `wool doctor` for details.\n", opts.target, r.ModelPath)
+		return 1
+	}
+	if info.IsDir() {
+		fmt.Fprintf(os.Stderr, "wool: model path for %s is a directory: %s\n", opts.target, r.ModelPath)
+		return 1
+	}
+	meta, err := gguf.ReadMeta(r.ModelPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "wool: cannot read metadata for %s: %v\nRun `wool doctor` for details.\n", r.ModelPath, err)
+		return 1
+	}
+	b, err := fitBudget(cfg, opts.vram)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "wool: %v\n", err)
+		return 1
+	}
+
+	settings := fit.Settings{
+		Ctx:        r.Ctx,
+		GPULayers:  r.GPULayers,
+		NCPUMoE:    r.NCPUMoE,
+		CacheTypeK: r.CacheTypeK,
+		CacheTypeV: r.CacheTypeV,
+	}
+	if opts.cacheType != "" {
+		settings.CacheTypeK, settings.CacheTypeV = opts.cacheType, opts.cacheType
+	}
+	if opts.gpuLayers != nil {
+		settings.GPULayers = *opts.gpuLayers
+	}
+	if opts.nCPUMoE != nil {
+		settings.NCPUMoE = *opts.nCPUMoE
+	}
+
+	res, err := fit.Solve(fit.Request{
+		ModelID:   r.ModelID,
+		ModelPath: r.ModelPath,
+		Meta:      meta,
+		FileBytes: uint64(info.Size()),
+		Budget:    b,
+		Settings:  settings,
+	})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "wool: fit %s: %v\n", opts.target, err)
+		return 1
+	}
+	res.Target, res.Kind = opts.target, kind
+	if opts.asJSON {
+		return writeJSON(res)
+	}
+	printFit(res)
+	return 0
+}
+
+// fitBudget derives the budget for a fit. An explicit --vram is the total card
+// size and deliberately ignores live other usage so repeated runs are stable.
+func fitBudget(cfg *config.Config, vram string) (gguf.Budget, error) {
+	reserve := uint64(0)
+	if cfg.Router.MemoryMarginMiB > 0 {
+		reserve = uint64(cfg.Router.MemoryMarginMiB) << 20
+	}
+	if vram != "" {
+		total, err := fit.ParseSize(vram)
+		if err != nil {
+			return gguf.Budget{}, fmt.Errorf("--vram: %w", err)
+		}
+		b := gguf.ComputeBudget(total, 0, reserve, 0, false)
+		if !b.Known || b.Available == 0 {
+			return b, fmt.Errorf("--vram %s leaves no room after the %s reserve", vram, humanSize(reserve))
+		}
+		return b, nil
+	}
+
+	snap, err := sysinfo.NewCollector().Sample()
+	if err != nil {
+		return gguf.Budget{}, fmt.Errorf("cannot read GPU telemetry: %v; pass --vram SIZE", err)
+	}
+	gpu, ok := snap.Primary()
+	if !ok || !gpu.HasVRAM || gpu.VRAMTotal == 0 {
+		return gguf.Budget{}, fmt.Errorf("no GPU VRAM detected; pass --vram SIZE (for example --vram 7G)")
+	}
+	var own uint64
+	var ownKnown bool
+	if inst, err := daemon.NewManager().Status("server"); err == nil && inst.Alive {
+		own, ownKnown = sysinfo.ProcessVRAM(inst.PID)
+	}
+	b := gguf.ComputeBudget(gpu.VRAMTotal, gpu.VRAMUsed, reserve, own, ownKnown)
+	if !b.Known || b.Available == 0 {
+		return b, fmt.Errorf("no VRAM is available after the %s reserve and current GPU usage; free VRAM or pass --vram SIZE", humanSize(reserve))
+	}
+	return b, nil
+}
+
+func printFit(res fit.Result) {
+	fmt.Printf("%s (%s) · model %s\n", res.Target, res.Kind, res.ModelID)
+	fmt.Printf("path: %s\n", res.ModelPath)
+	if res.Budget.Known {
+		fmt.Printf("budget: %s available of %s · reserve %s\n",
+			humanSize(res.Budget.Available), humanSize(res.Budget.Total), humanSize(res.Budget.Reserve))
+		if res.Budget.OwnKnown && res.Budget.OwnUsed > 0 {
+			fmt.Printf("server own usage excluded: %s\n", humanSize(res.Budget.OwnUsed))
+		}
+	}
+	fmt.Printf("native context: %d · minimum useful: %d\n", res.NativeContext, res.MinimumContext)
+	fmt.Printf("requested: ctx %d · gpu_layers %d · n_cpu_moe %d · cache %s/%s\n",
+		res.Requested.Ctx, res.Requested.GPULayers, res.Requested.NCPUMoE,
+		res.Requested.CacheTypeK, res.Requested.CacheTypeV)
+	fmt.Println()
+	fmt.Println("recommended:")
+	printFitRecommendation(res.Recommendation)
+	if len(res.Alternatives) > 0 {
+		fmt.Println("\nalternatives:")
+		for _, rec := range res.Alternatives {
+			printFitRecommendation(rec)
+		}
+	}
+	for _, note := range res.Notes {
+		fmt.Printf("\nnote: %s\n", note)
+	}
+}
+
+func printFitRecommendation(rec fit.Recommendation) {
+	line := fmt.Sprintf("  %d. ctx %d · gpu_layers %d · n_cpu_moe %d · cache %s/%s",
+		rec.Rank, rec.Ctx, rec.GPULayers, rec.NCPUMoE, rec.CacheTypeK, rec.CacheTypeV)
+	if rec.Fallback != "" {
+		line += " · fallback " + rec.Fallback
+	}
+	fmt.Println(line)
+	fmt.Printf("     gpu weights %s + kv %s + overhead %s = %s\n",
+		humanSize(rec.Estimate.GPUWeights), humanSize(rec.Estimate.KVBytes),
+		humanSize(rec.Estimate.Overhead), humanSize(rec.Estimate.Total))
+	if rec.Estimate.CPUWeights > 0 {
+		fmt.Printf("     cpu weights %s\n", humanSize(rec.Estimate.CPUWeights))
+	}
+	approx := ""
+	if rec.Estimate.Approximate {
+		approx = " · approximate"
+	}
+	fmt.Printf("     headroom %s · limit %s · %s%s\n", signedSize(rec.Headroom), rec.Limiting, fitVerdict(rec.Fits), approx)
+	for _, change := range rec.Changes {
+		fmt.Printf("     %s\n", change)
+	}
+}
+
+func fitVerdict(fits bool) string {
+	if fits {
+		return "fits"
+	}
+	return "over budget"
+}
+
+func signedSize(n int64) string {
+	if n < 0 {
+		return "-" + humanSize(uint64(-n))
+	}
+	return humanSize(uint64(n))
+}
+
+func humanSize(n uint64) string {
+	const unit = 1024
+	if n < unit {
+		return fmt.Sprintf("%d B", n)
+	}
+	div, exp := uint64(unit), 0
+	for m := n / unit; m >= unit && exp < 4; m /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f %ciB", float64(n)/float64(div), "KMGTPE"[exp])
 }
 
 func cmdConfig(cfgPath string, args []string) int {
