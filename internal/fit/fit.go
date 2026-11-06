@@ -87,6 +87,7 @@ type Result struct {
 	Recommendation Recommendation   `json:"recommendation"`
 	Alternatives   []Recommendation `json:"alternatives"`
 	Approximate    bool             `json:"approximate"`
+	SavedPreset    string           `json:"saved_preset,omitempty"`
 	Notes          []string         `json:"notes,omitempty"`
 }
 

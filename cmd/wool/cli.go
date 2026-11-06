@@ -64,6 +64,8 @@ fit options:
   --cache-type T   override cache_type_k and cache_type_v
   --gpu-layers N   override gpu_layers
   --n-cpu-moe N    override n_cpu_moe
+  --save-preset NAME  write the recommendation as presets.NAME
+  --force          replace an existing preset
   --json           print the stable machine-readable result
 
 The config defaults to ~/.config/wool/config.toml.
@@ -192,15 +194,19 @@ options:
   --cache-type T   override cache_type_k and cache_type_v
   --gpu-layers N   override gpu_layers
   --n-cpu-moe N    override n_cpu_moe
+  --save-preset NAME  write the recommendation as presets.NAME
+  --force          replace an existing preset
   --json           print the stable machine-readable result`
 
 type fitOptions struct {
-	target    string
-	vram      string
-	cacheType string
-	gpuLayers *int
-	nCPUMoE   *int
-	asJSON    bool
+	target     string
+	vram       string
+	cacheType  string
+	gpuLayers  *int
+	nCPUMoE    *int
+	savePreset string
+	force      bool
+	asJSON     bool
 }
 
 func (o *fitOptions) set(name, value string) error {
@@ -221,6 +227,8 @@ func (o *fitOptions) set(name, value string) error {
 			return fmt.Errorf("--n-cpu-moe must be a non-negative integer")
 		}
 		o.nCPUMoE = &n
+	case "--save-preset":
+		o.savePreset = value
 	default:
 		return fmt.Errorf("unknown option %q", name)
 	}
@@ -234,9 +242,12 @@ func parseFitArgs(args []string) (fitOptions, error) {
 		switch {
 		case a == "--json":
 			o.asJSON = true
+		case a == "--force":
+			o.force = true
 		case a == "-h" || a == "--help":
 			return o, flag.ErrHelp
-		case a == "--vram" || a == "--cache-type" || a == "--gpu-layers" || a == "--n-cpu-moe":
+		case a == "--vram" || a == "--cache-type" || a == "--gpu-layers" ||
+			a == "--n-cpu-moe" || a == "--save-preset":
 			if i+1 >= len(args) {
 				return o, fmt.Errorf("%s needs a value", a)
 			}
@@ -245,7 +256,8 @@ func parseFitArgs(args []string) (fitOptions, error) {
 				return o, err
 			}
 		case strings.HasPrefix(a, "--vram="), strings.HasPrefix(a, "--cache-type="),
-			strings.HasPrefix(a, "--gpu-layers="), strings.HasPrefix(a, "--n-cpu-moe="):
+			strings.HasPrefix(a, "--gpu-layers="), strings.HasPrefix(a, "--n-cpu-moe="),
+			strings.HasPrefix(a, "--save-preset="):
 			name, value, _ := strings.Cut(a, "=")
 			if err := o.set(name, value); err != nil {
 				return o, err
@@ -261,6 +273,9 @@ func parseFitArgs(args []string) (fitOptions, error) {
 	}
 	if o.target == "" {
 		return o, fmt.Errorf("TARGET is required")
+	}
+	if o.force && o.savePreset == "" {
+		return o, fmt.Errorf("--force requires --save-preset")
 	}
 	return o, nil
 }
@@ -335,6 +350,25 @@ func cmdFit(cfgPath string, args []string) int {
 		return 1
 	}
 	res.Target, res.Kind = opts.target, kind
+	if opts.savePreset != "" {
+		rec := res.Recommendation
+		err := cfg.SavePreset(cfgPath, opts.savePreset, r.ModelID, config.PresetFit{
+			Ctx:        rec.Ctx,
+			GPULayers:  rec.GPULayers,
+			NCPUMoE:    rec.NCPUMoE,
+			CacheTypeK: rec.CacheTypeK,
+			CacheTypeV: rec.CacheTypeV,
+		}, opts.force)
+		if errors.Is(err, config.ErrPresetExists) {
+			fmt.Fprintf(os.Stderr, "wool: %v; pass --force to replace it\n", err)
+			return 1
+		}
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "wool: save preset: %v\n", err)
+			return 1
+		}
+		res.SavedPreset = opts.savePreset
+	}
 	if opts.asJSON {
 		return writeJSON(res)
 	}
@@ -392,6 +426,9 @@ func printFit(res fit.Result) {
 		}
 	}
 	fmt.Printf("native context: %d · minimum useful: %d\n", res.NativeContext, res.MinimumContext)
+	if res.SavedPreset != "" {
+		fmt.Printf("saved preset: %s\n", res.SavedPreset)
+	}
 	fmt.Printf("requested: ctx %d · gpu_layers %d · n_cpu_moe %d · cache %s/%s\n",
 		res.Requested.Ctx, res.Requested.GPULayers, res.Requested.NCPUMoE,
 		res.Requested.CacheTypeK, res.Requested.CacheTypeV)

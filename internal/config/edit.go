@@ -10,19 +10,38 @@ import (
 
 var keyName = regexp.MustCompile(`^[A-Za-z0-9_.-]+$`)
 
+// Value is one TOML key/value pair written by SetValues. Value must already be
+// TOML-formatted (for example `32768` or `"on"`).
+type Value struct {
+	Key   string
+	Value string
+}
+
 // SetValue updates a single key inside a TOML table while preserving the rest
 // of the file, including comments and ordering. It creates the table if it
 // does not exist. value must already be TOML-formatted (for example `32768`
 // or `"on"`).
 func SetValue(path, table, key, value string) error {
+	return SetValues(path, table, []Value{{Key: key, Value: value}})
+}
+
+// SetValues updates several keys in one TOML table in a single atomic write.
+// It preserves comments and ordering outside the changed keys and creates the
+// table if it does not exist.
+func SetValues(path, table string, values []Value) error {
 	if !keyName.MatchString(table) {
 		return fmt.Errorf("invalid TOML table %q", table)
 	}
-	if !keyName.MatchString(key) {
-		return fmt.Errorf("invalid TOML key %q", key)
+	if len(values) == 0 {
+		return nil
 	}
-	if strings.ContainsAny(value, "\r\n") {
-		return fmt.Errorf("value for %s cannot contain a newline", key)
+	for _, v := range values {
+		if !keyName.MatchString(v.Key) {
+			return fmt.Errorf("invalid TOML key %q", v.Key)
+		}
+		if strings.ContainsAny(v.Value, "\r\n") {
+			return fmt.Errorf("value for %s cannot contain a newline", v.Key)
+		}
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -34,6 +53,18 @@ func SetValue(path, table, key, value string) error {
 	}
 
 	lines := strings.Split(string(data), "\n")
+	for _, v := range values {
+		lines = setValueLines(lines, table, v.Key, v.Value)
+	}
+
+	out := strings.Join(lines, "\n")
+	if !strings.HasSuffix(string(data), "\n") && strings.HasSuffix(out, "\n") {
+		out = strings.TrimSuffix(out, "\n")
+	}
+	return writeFileAtomic(path, []byte(out), mode)
+}
+
+func setValueLines(lines []string, table, key, value string) []string {
 	section := regexp.MustCompile(`^\s*\[` + regexp.QuoteMeta(table) + `\]\s*(?:#.*)?$`)
 	anyHeader := regexp.MustCompile(`^\s*\[.*\]\s*(?:#.*)?$`)
 	keyLine := regexp.MustCompile(`^(\s*)` + regexp.QuoteMeta(key) + `\s*=`)
@@ -50,39 +81,29 @@ func SetValue(path, table, key, value string) error {
 		if len(lines) > 0 && strings.TrimSpace(lines[len(lines)-1]) != "" {
 			lines = append(lines, "")
 		}
-		lines = append(lines, "["+table+"]", key+" = "+value)
-	} else {
-		end := len(lines)
-		for i := start + 1; i < len(lines); i++ {
-			if anyHeader.MatchString(lines[i]) {
-				end = i
-				break
-			}
-		}
-		replaced := false
-		for i := start + 1; i < end; i++ {
-			if m := keyLine.FindStringSubmatch(lines[i]); m != nil {
-				lines[i] = m[1] + key + " = " + value
-				replaced = true
-				break
-			}
-		}
-		if !replaced {
-			insert := start + 1
-			for i := start + 1; i < end; i++ {
-				if t := strings.TrimSpace(lines[i]); t != "" && !strings.HasPrefix(t, "#") {
-					insert = i + 1
-				}
-			}
-			lines = append(lines[:insert], append([]string{key + " = " + value}, lines[insert:]...)...)
-		}
+		return append(lines, "["+table+"]", key+" = "+value)
 	}
 
-	out := strings.Join(lines, "\n")
-	if !strings.HasSuffix(string(data), "\n") && strings.HasSuffix(out, "\n") {
-		out = strings.TrimSuffix(out, "\n")
+	end := len(lines)
+	for i := start + 1; i < len(lines); i++ {
+		if anyHeader.MatchString(lines[i]) {
+			end = i
+			break
+		}
 	}
-	return writeFileAtomic(path, []byte(out), mode)
+	for i := start + 1; i < end; i++ {
+		if m := keyLine.FindStringSubmatch(lines[i]); m != nil {
+			lines[i] = m[1] + key + " = " + value
+			return lines
+		}
+	}
+	insert := start + 1
+	for i := start + 1; i < end; i++ {
+		if t := strings.TrimSpace(lines[i]); t != "" && !strings.HasPrefix(t, "#") {
+			insert = i + 1
+		}
+	}
+	return append(lines[:insert], append([]string{key + " = " + value}, lines[insert:]...)...)
 }
 
 // RemoveValue deletes one scalar key from a TOML table while preserving the

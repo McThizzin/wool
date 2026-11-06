@@ -1,6 +1,7 @@
 package app
 
 import (
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -54,10 +55,15 @@ type editor struct {
 
 // fitOverlay is the editor's unsaved fit recommendation picker.
 type fitOverlay struct {
-	result fit.Result
-	recs   []fit.Recommendation
-	sel    int
-	err    string
+	result      fit.Result
+	recs        []fit.Recommendation
+	sel         int
+	err         string
+	naming      bool
+	saveName    textinput.Model
+	confirmName string
+	notice      string
+	noticeErr   bool
 }
 
 // editorPreview is the unsaved estimate for the draft value being typed.
@@ -254,6 +260,12 @@ func (m *Model) updateFitOverlay(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if f == nil {
 		return m, nil
 	}
+	if f.naming {
+		return m.updateFitSaveName(msg)
+	}
+	if f.confirmName != "" {
+		return m.updateFitConfirmSave(msg)
+	}
 	switch msg.String() {
 	case "esc", "q":
 		e.fit = nil
@@ -265,6 +277,10 @@ func (m *Model) updateFitOverlay(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		f.sel = 0
 	case "G", "end":
 		f.sel = maxInt(0, len(f.recs)-1)
+	case "p":
+		if f.err == "" && len(f.recs) > 0 {
+			m.startFitPreset()
+		}
 	case "enter", " ":
 		if f.err != "" || len(f.recs) == 0 {
 			return m, nil
@@ -276,6 +292,107 @@ func (m *Model) updateFitOverlay(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 	}
 	return m, nil
+}
+
+func (m *Model) startFitPreset() {
+	e := m.editor
+	f := e.fit
+	f.naming = true
+	f.confirmName = ""
+	f.notice = ""
+	f.noticeErr = false
+	f.saveName = textinput.New()
+	f.saveName.CharLimit = 64
+	f.saveName.Width = 40
+	f.saveName.SetValue(fitPresetName(e.base.ModelID, f.recs[f.sel].Ctx))
+	f.saveName.CursorEnd()
+	f.saveName.Focus()
+}
+
+func fitPresetName(modelID string, ctx int) string {
+	suffix := fmt.Sprintf("-%d", ctx)
+	if len(modelID)+len(suffix) > 64 {
+		modelID = modelID[:64-len(suffix)]
+	}
+	return modelID + suffix
+}
+
+func (m *Model) updateFitSaveName(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	f := m.editor.fit
+	switch msg.String() {
+	case "esc":
+		f.naming = false
+		f.saveName.Blur()
+		f.notice = ""
+		f.noticeErr = false
+	case "enter":
+		name := strings.TrimSpace(f.saveName.Value())
+		if err := m.saveFitPreset(name, false); err != nil {
+			if errors.Is(err, config.ErrPresetExists) {
+				f.naming = false
+				f.saveName.Blur()
+				f.confirmName = name
+				f.notice = name + " already exists · press P to replace"
+			} else {
+				f.notice = err.Error()
+			}
+			f.noticeErr = true
+			return m, nil
+		}
+		f.naming = false
+		f.saveName.Blur()
+		f.notice = "saved preset " + name
+		f.noticeErr = false
+		m.setToast("saved preset " + name)
+	default:
+		var cmd tea.Cmd
+		f.saveName, cmd = f.saveName.Update(msg)
+		return m, cmd
+	}
+	return m, nil
+}
+
+func (m *Model) updateFitConfirmSave(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	f := m.editor.fit
+	switch msg.String() {
+	case "esc":
+		f.confirmName = ""
+		f.notice = ""
+		f.noticeErr = false
+	case "P", "ctrl+p":
+		name := f.confirmName
+		if err := m.saveFitPreset(name, true); err != nil {
+			f.notice = err.Error()
+			f.noticeErr = true
+			return m, nil
+		}
+		f.confirmName = ""
+		f.notice = "saved preset " + name
+		f.noticeErr = false
+		m.setToast("saved preset " + name)
+	}
+	return m, nil
+}
+
+// saveFitPreset writes the selected recommendation as a new preset. It reloads
+// the config but leaves the editor and fit overlay open.
+func (m *Model) saveFitPreset(name string, force bool) error {
+	e := m.editor
+	if e == nil || e.fit == nil || len(e.fit.recs) == 0 {
+		return fmt.Errorf("no recommendation to save")
+	}
+	rec := e.fit.recs[e.fit.sel]
+	if err := m.cfg.SavePreset(e.path, name, e.base.ModelID, config.PresetFit{
+		Ctx:        rec.Ctx,
+		GPULayers:  rec.GPULayers,
+		NCPUMoE:    rec.NCPUMoE,
+		CacheTypeK: rec.CacheTypeK,
+		CacheTypeV: rec.CacheTypeV,
+	}, force); err != nil {
+		return err
+	}
+	m.reloadConfig()
+	return nil
 }
 
 // applyFit updates the editor's in-memory draft. Nothing is written until the
@@ -374,6 +491,15 @@ func (m *Model) editorFitView() string {
 		body = append(body, st.Muted.Render(ui.Fit(fmt.Sprintf(
 			"budget %s available · native %d · min %d",
 			ui.HumanBytes(res.Budget.Available), res.NativeContext, res.MinimumContext), w-4)))
+		if f.naming {
+			body = append(body, st.Accent.Render("save preset: ")+f.saveName.View())
+		} else if f.notice != "" {
+			style := st.Good
+			if f.noticeErr {
+				style = st.Warn
+			}
+			body = append(body, style.Render(ui.Fit(f.notice, w-4)))
+		}
 		body = append(body, "")
 		for i, rec := range f.recs {
 			mark := " "
@@ -410,7 +536,6 @@ func (m *Model) editorFitView() string {
 			for _, note := range res.Notes {
 				body = append(body, st.Warn.Render(ui.Fit("note: "+note, w-4)))
 			}
-			body = append(body, st.Muted.Render("enter apply to draft · j/k select · esc close"))
 		} else {
 			body = append(body, st.Warn.Render("no recommendation"))
 		}
@@ -418,7 +543,14 @@ func (m *Model) editorFitView() string {
 	if len(body) > h-2 {
 		body = body[:h-2]
 	}
-	panel := m.render.Panel("fit · "+e.title, "unsaved recommendation · enter applies", body, w, h, true)
+	hint := "enter apply · p save preset · j/k select · esc close"
+	if f.naming {
+		hint = "enter save preset · esc cancel"
+	}
+	if f.confirmName != "" {
+		hint = "P replace · esc cancel"
+	}
+	panel := m.render.Panel("fit · "+e.title, hint, body, w, h, true)
 	lines := strings.Split(panel, "\n")
 	left := clamp((m.width-w)/2, 0, m.width)
 	var out []string

@@ -74,7 +74,7 @@ Shipped foundation:
 | --- | --- |
 | Launch | Detached single-server and router modes, health wait, auto-port, PID/start-tick validation |
 | Config | TOML schema, layered inheritance, validation, provenance/explain, comment-preserving edits and override reset |
-| Fit | Dense, hybrid-attention, sliding-window, shared-KV and MoE-expert VRAM estimate, auto-fit solver with cache/CPU-offload fallbacks, GGUF metadata and tensor reader, AMD telemetry |
+| Fit | Dense, hybrid-attention, sliding-window, shared-KV and MoE-expert VRAM estimate, auto-fit solver with cache/CPU-offload fallbacks, saving a recommendation as a preset, GGUF metadata and tensor reader, AMD telemetry |
 | Observe | Dashboard, hardware sparklines, log tail, router `/metrics` and `/slots` |
 | Operate | Start/stop/restart, stale-state cleanup, log tailing |
 | CLI | `run`, `stop`, `status`, `logs`, `router`, `list`, `doctor`, `fit`, `config`, JSON for some commands |
@@ -422,7 +422,7 @@ boundary.
 | M2.1 | [MoE expert offload modeling](features/m2-01-moe-expert-offload-modeling.md) | M2 | P1 | L | — | shipped |
 | M2.2 | [Architecture-aware estimate](features/m2-02-architecture-aware-estimate.md) | M2 | P1 | L | M2.1 | shipped |
 | M2.3 | [Auto-fit solver](features/m2-03-auto-fit-solver.md) | M2 | P1 | M/L | M1.2, M2.1, M2.2 | shipped |
-| M2.4 | [Save recommendation as a preset](features/m2-04-save-a-recommendation-as-a-preset.md) | M2 | P2 | S | M2.3 | planned |
+| M2.4 | [Save recommendation as a preset](features/m2-04-save-a-recommendation-as-a-preset.md) | M2 | P2 | S | M2.3 | shipped |
 | M3.1 | [`wool bench`](features/m3-01-wool-bench.md) | M3 | P1 | L | M1.3 | planned |
 | M3.2 | [Benchmark history and trends](features/m3-02-benchmark-history-and-trends.md) | M3 | P1 | M | M3.1 | planned |
 | M3.3 | [A/B comparison](features/m3-03-a-b-comparison.md) | M3 | P2 | M | M3.1, M3.2 | planned |

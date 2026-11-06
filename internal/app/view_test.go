@@ -372,6 +372,74 @@ func TestEditorFitAppliesToDraftOnly(t *testing.T) {
 	}
 }
 
+func TestEditorFitSavesPreset(t *testing.T) {
+	m := testModel(t)
+	m.setTab(tabPresets)
+	m.presetSel = indexOf(m.presets, "gemma-heretic-32k")
+	if m.presetSel < 0 {
+		t.Fatal("example preset missing")
+	}
+	m.openEditor()
+	if m.editor == nil {
+		t.Fatal("editor did not open")
+	}
+	e := m.editor
+	e.meta = gguf.Meta{
+		Architecture: "x", BlockCount: 8, Embedding: 8, HeadCount: 2,
+		HeadCountKV: []int{1, 1, 1, 1, 1, 1, 1, 1}, KeyLength: 4, ValueLength: 4,
+		CtxTrain: 131072,
+	}
+	e.size = 1 << 30
+	e.hasMeta = true
+	e.metaErr = ""
+	e.baseEst = gguf.EstimateVRAM(e.meta, e.size, e.base.Ctx, e.base.GPULayers, e.base.NCPUMoE, e.base.CacheTypeK, e.base.CacheTypeV)
+	e.preview = m.previewFor(e, e.base)
+
+	m.openFitOverlay()
+	if e.fit == nil || e.fit.err != "" || len(e.fit.recs) == 0 {
+		t.Fatalf("fit overlay = %+v", e.fit)
+	}
+	rec := e.fit.recs[0]
+
+	p := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'p'}}
+	enter := tea.KeyMsg{Type: tea.KeyEnter}
+	if _, _ = m.updateEditor(p); !e.fit.naming {
+		t.Fatal("p did not open the preset name prompt")
+	}
+	e.fit.saveName.SetValue("fitted-test")
+	if _, _ = m.updateEditor(enter); e.fit.noticeErr || !strings.Contains(e.fit.notice, "saved preset") {
+		t.Fatalf("save notice = %q, err = %v", e.fit.notice, e.fit.noticeErr)
+	}
+	cfg, err := config.Load(m.cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	saved, ok := cfg.Presets["fitted-test"]
+	if !ok {
+		t.Fatal("saved preset missing from config")
+	}
+	r, err := cfg.Resolve("", &saved)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.ModelID != e.base.ModelID || r.Ctx != rec.Ctx || r.GPULayers != rec.GPULayers ||
+		r.NCPUMoE != rec.NCPUMoE || r.CacheTypeK != rec.CacheTypeK || r.CacheTypeV != rec.CacheTypeV {
+		t.Fatalf("resolved saved preset = %+v, rec = %+v", r, rec)
+	}
+
+	// Saving the same name again requires an explicit force key.
+	if _, _ = m.updateEditor(p); !e.fit.naming {
+		t.Fatal("p did not reopen the preset name prompt")
+	}
+	e.fit.saveName.SetValue("fitted-test")
+	if _, _ = m.updateEditor(enter); e.fit.confirmName != "fitted-test" || !strings.Contains(e.fit.notice, "exists") {
+		t.Fatalf("existing preset prompt = %q / %q", e.fit.confirmName, e.fit.notice)
+	}
+	if _, _ = m.updateEditor(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'P'}}); e.fit.confirmName != "" || e.fit.noticeErr {
+		t.Fatalf("force save failed: %q / %v", e.fit.notice, e.fit.noticeErr)
+	}
+}
+
 func TestEditorShowsSourcesAndResets(t *testing.T) {
 	m := testModel(t)
 	m.setTab(tabPresets)

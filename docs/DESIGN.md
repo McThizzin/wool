@@ -226,11 +226,12 @@ config can be prepared before the weights are downloaded.
 
 The TUI editor writes through `config.SetValue`, a small TOML-aware editor
 that changes only the requested key and preserves the rest of the file's
-comments and ordering. `config.RemoveValue` is its counterpart: it deletes one
-scalar key, leaves an empty table header in place, and refuses multi-line or
-inline collection values. After a save or reset the config is reloaded and the
-relevant caches are invalidated. The TOML file remains the source of truth;
-there is no hidden state database.
+comments and ordering. `config.SetValues` applies several key updates in one
+atomic write; `SetValue` is its single-key wrapper. `config.RemoveValue` is the
+counterpart: it deletes one scalar key, leaves an empty table header in place,
+and refuses multi-line or inline collection values. After a save or reset the
+config is reloaded and the relevant caches are invalidated. The TOML file
+remains the source of truth; there is no hidden state database.
 
 ## Single-server launches
 
@@ -494,7 +495,16 @@ breakdown, headroom, limiting term and changed fields. `enter` applies the
 selection to the in-memory draft and marks it dirty; the normal field edits are
 suspended while a fit draft is pending. `ctrl+s` writes only the changed
 fit-controlled options to the target's existing table; `esc` discards the draft
-and restores the saved values. No preset is created.
+and restores the saved values.
+
+`p` in the fit overlay opens a preset-name prompt pre-filled with
+`<model>-<ctx>`. `enter` writes the selected recommendation as a new preset and
+reloads the config without closing the overlay; an existing name switches to a
+confirm step that requires `P` to replace it, and `esc` cancels. Saving uses
+`config.SavePreset`, which writes `model`, `ctx`, `gpu_layers`, `n_cpu_moe`,
+`cache_type_k` and `cache_type_v` through `config.SetValues`. Existing comments
+and unrelated sections are preserved; a replaced preset keeps its other
+options.
 
 ## Hardware telemetry
 
@@ -647,8 +657,10 @@ The editor's `F` (or `/fit`) opens a picker over the recommendation and its
 alternatives. `enter` copies `ctx`, `gpu_layers`, `n_cpu_moe`,
 `cache_type_k` and `cache_type_v` into the in-memory draft and recomputes the
 preview; `ctrl+s` writes only the values that differ from the saved config;
-`esc` discards the draft. The solver never writes TOML and does not create a
-preset. Preset creation is M2.4.
+`esc` discards the draft. The solver itself never writes TOML. Saving a
+recommendation as a preset is an explicit action: `wool fit --save-preset NAME`
+or `p` in the picker calls `config.SavePreset`, which refuses an existing name
+unless forced. Replacing a preset updates only the fit-controlled keys.
 
 ## Observed measurements
 
@@ -710,7 +722,10 @@ wool version
 
 `run` options: `--dry-run`, `--restart`, `--port N`, `--no-wait`.
 `fit` options: `--vram SIZE`, `--cache-type TYPE`, `--gpu-layers N`,
-`--n-cpu-moe N`, `--json`.
+`--n-cpu-moe N`, `--save-preset NAME`, `--force`, `--json`. `--force` is only
+valid with `--save-preset`; saving happens before output so a failure is
+reported without a success line. In JSON output, `saved_preset` is present when
+a preset was written.
 `router start` accepts the same options as `run`. Unless `--no-wait` or
 `--dry-run` is used, `wool run` records one observation after health, so the
 command stays alive through the 5s/15s settle window.
@@ -760,8 +775,9 @@ criteria. The limitations below are the current state, not the plan.
 - The editor can reset launch-option overrides, but not `model`, `path`,
   `alias` or `extra` keys.
 - `wool fit` is advisory and inherits the estimator's approximation. It never
-  recommends an over-budget configuration, but it does not create presets;
-  applying a recommendation edits the selected target's existing options.
+  recommends an over-budget configuration. Saving a preset is explicit and
+  updates only the fit-controlled keys; applying a recommendation to an
+  existing target remains a separate draft edit.
 - There is no automatic restart/supervision of the standalone server in v1.
   Router-managed models are supervised by `llama-server` itself.
 - Logs are tailed from disk on a timer rather than streamed; this is simple
