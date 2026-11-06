@@ -271,7 +271,8 @@ stats are usable; the endpoint helper works.
 
 ## M5 — Integrate (v0.6)
 
-**Outcome:** “Finds my models and fits into my scripts and services.”
+**Outcome:** “Finds my models, exposes the full `llama-server` flag surface, and
+fits into my scripts and services.”
 
 This milestone removes setup friction and makes wool scriptable. It is not a
 platform milestone; additional GPU vendors stay blocked.
@@ -280,15 +281,18 @@ platform milestone; additional GPU vendors stay blocked.
 | --- | --- | --- | --- |
 | M5.1 | [Model discovery](features/m5-01-model-discovery.md) | P1 | M |
 | M5.2 | [Disk and orphan view](features/m5-02-disk-and-orphan-view.md) | P2 | S |
-| M5.3 | [Export a preset as a service](features/m5-03-export-a-preset-as-a-service.md) | P2 | S/M |
-| M5.4 | [Config validation with line numbers](features/m5-04-config-validation-with-line-numbers.md) | P2 | S/M |
-| M5.5 | [Preset cloning and templates](features/m5-05-preset-cloning-and-templates.md) | P3 | M |
-| M5.6 | [Machine-readable surface](features/m5-06-machine-readable-surface.md) | P2 | M/L |
-| M5.7 | [Hooks](features/m5-07-hooks.md) | P3 | M |
+| M5.3 | [Config validation with line numbers](features/m5-03-config-validation-with-line-numbers.md) | P2 | S/M |
+| M5.4 | [Extra-flag editing and provenance](features/m5-04-extra-flag-editing-and-provenance.md) | P1 | S/M |
+| M5.5 | [Flag catalog and fuzzy reference](features/m5-05-flag-catalog-and-fuzzy-reference.md) | P2 | M |
+| M5.6 | [Export a preset as a service](features/m5-06-export-a-preset-as-a-service.md) | P2 | S/M |
+| M5.7 | [Preset cloning and templates](features/m5-07-preset-cloning-and-templates.md) | P3 | M |
+| M5.8 | [Machine-readable surface](features/m5-08-machine-readable-surface.md) | P2 | M/L |
+| M5.9 | [Hooks](features/m5-09-hooks.md) | P3 | M |
 
-**Exit criteria:** models can be discovered and added; a tuned preset can be
-exported; core commands have stable JSON; config errors point at a line;
-cloning and hooks work.
+**Exit criteria:** models can be discovered and added; config errors point at a
+line; arbitrary `llama-server` flags can be added, edited and discovered without
+hand-editing TOML; a tuned preset can be exported; core commands have stable
+JSON including the flag catalog; cloning and hooks work.
 
 ## v1.0 — Daily driver
 
@@ -304,11 +308,35 @@ end for the primary persona:
   are available and opt-in.
 - Core read commands have stable JSON; the config schema is documented and old
   configs keep loading.
+- Any `llama-server` launch option can be added without hand-editing TOML; the
+  flag reference is searchable and records the tested version. Unknown flags
+  warn but still launch.
 - CI runs the full test suite and the multi-size view tests; releases are
   tagged and reproducible.
 - No known data-loss or security issues in config editing, hooks or the local
   API.
 - Unsupported hardware fails with a clear message, not a misleading dashboard.
+
+## Maintenance track (post-v1.0)
+
+This work keeps the shipped app aligned with `llama.cpp` without expanding the
+v1.0 scope. It is maintenance, not a milestone.
+
+| Work | Trigger | Cadence |
+| --- | --- | --- |
+| Flag catalog refresh | Upstream adds, removes or changes `llama-server` flags | Every wool release, plus an upstream version check |
+| Generated flag reference | Catalog or descriptions change | Same change as the catalog refresh |
+| Unknown-flag review | Doctor or `wool flags --check` reports drift | When reported or at each release |
+
+- The catalog records the tested `llama.cpp` version and commit.
+- `wool flags --check` compares the installed `llama-server --help` with the
+  embedded catalog. It never downloads or builds upstream.
+- A scheduled workflow may open one issue when upstream is newer than the
+  catalog. It must not auto-merge or publish a catalog.
+- Unknown flags always pass through. Removed flags remain deprecated for one
+  cycle before deletion.
+- Refreshing the catalog is a maintainer step; runtime never needs network
+  access for flag discovery.
 
 <a id="platform-track"></a>
 
@@ -345,6 +373,7 @@ Promote one only when its trigger happens.
 | L6 | **Detached supervisor** | M4.4 covers detection and in-session restart; a detached supervisor is a second process model | Users report servers dying while wool is closed, and systemd export is not enough | L |
 | L7 | **Quality/perplexity A/B** | Needs an evaluation dataset and a defensible methodology | Speed A/B is established and users want quality trade-offs | XL |
 | L8 | **Named multi-instance servers** | The daemon layer already uses names, but the TUI and CLI assume `server` and `router` | One standalone server becomes a real limitation in daily use | L |
+| L9 | **Repeated and structured flag arguments** | `[*.extra]` is a one-value map; repeated flags such as `--lora` and `--override-tensor`, or ordered argv, need a new schema and router INI handling | Users need a flag that cannot be expressed as one value | M |
 
 ## Cross-cutting prerequisites
 
@@ -359,7 +388,7 @@ milestones above smaller.
 | GGUF tensor-info table | Expert bytes, better quant metadata | M2.1, M5.1 | M2 |
 | Completion timings and streaming client | Bench and later chat | M3.1, L1 | M3 |
 | Log/event scanner | Crash reasons, alerts, request rows | M4.2–M4.4 | M4 |
-| Stable JSON schemas | Scripting, API, golden tests | M5.6 | M5 |
+| Stable JSON schemas | Scripting, API, golden tests | M5.8 | M5 |
 
 ## Risks and open questions
 
@@ -368,9 +397,12 @@ Risks:
 - **Calibration is confounded.** Other GPU users, mmap faulting and driver
   accounting can make observed VRAM noisy. Store baselines, show sample counts,
   clamp corrections and never hard-block a launch from a corrected estimate.
-- **`llama-server` API drift.** `/metrics`, `/slots`, router endpoints and log
-  formats are not a stable public contract. Feature-detect, degrade gracefully,
-  and record the tested version in Doctor.
+- **`llama-server` API drift.** `/metrics`, `/slots`, router endpoints, log
+  formats and `--help` text are not a stable public contract. Feature-detect,
+  degrade gracefully, and record the tested version in Doctor.
+- **Flag catalog drift.** Keep the catalog advisory, always allow unknown
+  flags, and refresh it from a tested `llama.cpp` build rather than treating
+  the embedded data as an allowlist.
 - **MoE tensor naming.** Architectures differ. Keep the mapping in one place,
   test against real metadata, and fall back conservatively.
 - **Benchmark noise.** Thermals and background load dominate small differences.
@@ -390,7 +422,7 @@ Risks:
 - **Scope creep from chat and downloads.** Keep them in Later Bets until the
   core loop is measured and trusted.
 
-Open questions to resolve before or during M1:
+Open questions to resolve before or during the relevant milestone:
 
 1. What is the minimum supported `llama-server` version? Doctor should report
    it and the roadmap should name it.
@@ -406,6 +438,10 @@ Open questions to resolve before or during M1:
    16 GB card? The current router default is 512 MiB.
 7. Should model discovery follow symlinks, or skip them by default to avoid
    loops and duplicate paths?
+8. Should the flag catalog come only from `llama-server --help`, or also from
+   upstream documentation? Current plan: parse `--help` with curated overrides.
+9. Should an unknown flag be a warning by default and an error only under
+   strict mode? Current plan: warn, but always allow the launch.
 
 ## Appendix: backlog at a glance
 
@@ -438,11 +474,13 @@ boundary.
 | M4.8 | [Endpoint helper](features/m4-08-endpoint-helper.md) | M4 | P3 | S | — | planned |
 | M5.1 | [Model discovery](features/m5-01-model-discovery.md) | M5 | P1 | M | — | planned |
 | M5.2 | [Disk and orphan view](features/m5-02-disk-and-orphan-view.md) | M5 | P2 | S | M5.1 | planned |
-| M5.3 | [Export as a service](features/m5-03-export-a-preset-as-a-service.md) | M5 | P2 | S/M | — | planned |
-| M5.4 | [Config validation with line numbers](features/m5-04-config-validation-with-line-numbers.md) | M5 | P2 | S/M | — | planned |
-| M5.5 | [Preset cloning and templates](features/m5-05-preset-cloning-and-templates.md) | M5 | P3 | M | M1.1 | planned |
-| M5.6 | [Machine-readable surface](features/m5-06-machine-readable-surface.md) | M5 | P2 | M/L | M1.3, M3.1 | planned |
-| M5.7 | [Hooks](features/m5-07-hooks.md) | M5 | P3 | M | M4.4 | planned |
+| M5.3 | [Config validation with line numbers](features/m5-03-config-validation-with-line-numbers.md) | M5 | P2 | S/M | — | planned |
+| M5.4 | [Extra-flag editing and provenance](features/m5-04-extra-flag-editing-and-provenance.md) | M5 | P1 | S/M | M1.1 | planned |
+| M5.5 | [Flag catalog and fuzzy reference](features/m5-05-flag-catalog-and-fuzzy-reference.md) | M5 | P2 | M | M5.3, M5.4 | planned |
+| M5.6 | [Export as a service](features/m5-06-export-a-preset-as-a-service.md) | M5 | P2 | S/M | M5.4 | planned |
+| M5.7 | [Preset cloning and templates](features/m5-07-preset-cloning-and-templates.md) | M5 | P3 | M | M1.1, M5.4 | planned |
+| M5.8 | [Machine-readable surface](features/m5-08-machine-readable-surface.md) | M5 | P2 | M/L | M1.3, M3.1, M5.5 | planned |
+| M5.9 | [Hooks](features/m5-09-hooks.md) | M5 | P3 | M | M4.4 | planned |
 | PLAT-1 | [NVIDIA telemetry backend](features/platform-01-nvidia.md) | Platform | P3 | M/L | — | blocked |
 | PLAT-2 | [Multi-GPU awareness](features/platform-02-multi-gpu.md) | Platform | P3 | L | PLAT-1, M2.1 | blocked |
 | PLAT-3 | [Intel GPU telemetry](features/platform-03-intel.md) | Platform | P3 | M | — | blocked |

@@ -19,7 +19,7 @@ overwrite without `--force`. The TUI offers the same action after a fit.
 - In: saving the primary recommendation as a new preset from the CLI or the fit
   picker, explicit replacement of an existing preset, and preserving the rest
   of the TOML file.
-- Out: cloning a preset without a fit (M5.5), previewing a saved preset's diff
+- Out: cloning a preset without a fit (M5.7), previewing a saved preset's diff
   before writing, and launching the saved preset automatically.
 
 **Implementation notes.**

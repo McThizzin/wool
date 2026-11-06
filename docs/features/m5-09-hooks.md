@@ -1,4 +1,4 @@
-# M5.7 — Hooks
+# M5.9 — Hooks
 
 Part of [M5](../roadmap.md#milestone-m5). See the
 [roadmap](../roadmap.md) for sequencing and the [feature index](README.md).

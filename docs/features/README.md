@@ -32,11 +32,13 @@ Status values: `planned`, `in progress`, `shipped`, `blocked`, `dropped`.
 | M4.8 — Endpoint helper | P3 | S | none | planned | [m4-08-endpoint-helper.md](m4-08-endpoint-helper.md) |
 | M5.1 — Model discovery | P1 | M | none | planned | [m5-01-model-discovery.md](m5-01-model-discovery.md) |
 | M5.2 — Disk and orphan view | P2 | S | M5.1 | planned | [m5-02-disk-and-orphan-view.md](m5-02-disk-and-orphan-view.md) |
-| M5.3 — Export a preset as a service | P2 | S/M | none | planned | [m5-03-export-a-preset-as-a-service.md](m5-03-export-a-preset-as-a-service.md) |
-| M5.4 — Config validation with line numbers | P2 | S/M | none | planned | [m5-04-config-validation-with-line-numbers.md](m5-04-config-validation-with-line-numbers.md) |
-| M5.5 — Preset cloning and templates | P3 | M | M1.1 | planned | [m5-05-preset-cloning-and-templates.md](m5-05-preset-cloning-and-templates.md) |
-| M5.6 — Machine-readable surface | P2 | M/L | M1.3, M3.1 | planned | [m5-06-machine-readable-surface.md](m5-06-machine-readable-surface.md) |
-| M5.7 — Hooks | P3 | M | M4.4 | planned | [m5-07-hooks.md](m5-07-hooks.md) |
+| M5.3 — Config validation with line numbers | P2 | S/M | none | planned | [m5-03-config-validation-with-line-numbers.md](m5-03-config-validation-with-line-numbers.md) |
+| M5.4 — Extra-flag editing and provenance | P1 | S/M | M1.1 | planned | [m5-04-extra-flag-editing-and-provenance.md](m5-04-extra-flag-editing-and-provenance.md) |
+| M5.5 — Flag catalog and fuzzy reference | P2 | M | M5.3, M5.4 | planned | [m5-05-flag-catalog-and-fuzzy-reference.md](m5-05-flag-catalog-and-fuzzy-reference.md) |
+| M5.6 — Export a preset as a service | P2 | S/M | M5.4 | planned | [m5-06-export-a-preset-as-a-service.md](m5-06-export-a-preset-as-a-service.md) |
+| M5.7 — Preset cloning and templates | P3 | M | M1.1, M5.4 | planned | [m5-07-preset-cloning-and-templates.md](m5-07-preset-cloning-and-templates.md) |
+| M5.8 — Machine-readable surface | P2 | M/L | M1.3, M3.1, M5.5 | planned | [m5-08-machine-readable-surface.md](m5-08-machine-readable-surface.md) |
+| M5.9 — Hooks | P3 | M | M4.4 | planned | [m5-09-hooks.md](m5-09-hooks.md) |
 | PLAT-1 — NVIDIA telemetry backend | P3 | M/L | none | blocked | [platform-01-nvidia.md](platform-01-nvidia.md) |
 | PLAT-2 — Multi-GPU awareness | P3 | L | PLAT-1, M2.1 | blocked | [platform-02-multi-gpu.md](platform-02-multi-gpu.md) |
 | PLAT-3 — Intel GPU telemetry backend | P3 | M | none | blocked | [platform-03-intel.md](platform-03-intel.md) |

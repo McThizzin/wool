@@ -1,9 +1,9 @@
-# M5.3 — Export a preset as a service
+# M5.6 — Export a preset as a service
 
 Part of [M5](../roadmap.md#milestone-m5). See the
 [roadmap](../roadmap.md) for sequencing and the [feature index](README.md).
 
-**Priority** P2 · **Size** S/M · **Depends** none
+**Priority** P2 · **Size** S/M · **Depends** M5.4
 
 **Status** planned
 
@@ -22,5 +22,6 @@ emits:
 
 - [ ] Generated units parse with `systemd-analyze verify` when available.
 - [ ] Paths and arguments are quoted correctly.
+- [ ] Preset extras and `router.extra_args` are serialized in every format.
 - [ ] No secrets are embedded.
 - [ ] Golden tests cover each format.

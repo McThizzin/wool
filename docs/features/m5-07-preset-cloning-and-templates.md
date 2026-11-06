@@ -1,9 +1,9 @@
-# M5.5 — Preset cloning and templates
+# M5.7 — Preset cloning and templates
 
 Part of [M5](../roadmap.md#milestone-m5). See the
 [roadmap](../roadmap.md) for sequencing and the [feature index](README.md).
 
-**Priority** P3 · **Size** M · **Depends** M1.1
+**Priority** P3 · **Size** M · **Depends** M1.1, M5.4
 
 **Status** planned
 
@@ -23,6 +23,7 @@ Refuse to overwrite unless `--force`.
 **Acceptance.**
 
 - [ ] Clone preserves overrides and model reference.
+- [ ] Clone preserves extras inherited from the source preset and its model.
 - [ ] Template values are valid and documented.
 - [ ] Existing presets are never overwritten silently.
 - [ ] The TUI exposes the same actions.

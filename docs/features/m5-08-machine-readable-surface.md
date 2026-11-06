@@ -1,9 +1,9 @@
-# M5.6 — Machine-readable surface
+# M5.8 — Machine-readable surface
 
 Part of [M5](../roadmap.md#milestone-m5). See the
 [roadmap](../roadmap.md) for sequencing and the [feature index](README.md).
 
-**Priority** P2 · **Size** M/L · **Depends** M1.3, M3.1
+**Priority** P2 · **Size** M/L · **Depends** M1.3, M3.1, M5.5
 
 **Status** planned
 
@@ -14,9 +14,11 @@ is no local API.
 
 - Make every read command support `--json` with a documented schema and a
   `schema_version` field.
+- Include `wool flags --json` and the embedded flag catalog in the stable
+  surface.
 - Add `wool api` as a local HTTP or Unix-socket server. Start read-only:
-  status, list, doctor, fit, bench history. Add actions only with an explicit
-  token and a clear security section.
+  status, list, doctor, fit, bench history, flags. Add actions only with an
+  explicit token and a clear security section.
 
 **Acceptance.**
 
