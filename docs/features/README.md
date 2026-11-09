@@ -17,7 +17,7 @@ Status values: `planned`, `in progress`, `shipped`, `blocked`, `dropped`.
 | M2.2 — Architecture-aware estimate | P1 | L | M2.1 | shipped | [m2-02-architecture-aware-estimate.md](m2-02-architecture-aware-estimate.md) |
 | M2.3 — Auto-fit solver | P1 | M/L | M1.2, M2.1, M2.2 | shipped | [m2-03-auto-fit-solver.md](m2-03-auto-fit-solver.md) |
 | M2.4 — Save a recommendation as a preset | P2 | S | M2.3 | shipped | [m2-04-save-a-recommendation-as-a-preset.md](m2-04-save-a-recommendation-as-a-preset.md) |
-| M3.1 — `wool bench` | P1 | L | M1.3 | planned | [m3-01-wool-bench.md](m3-01-wool-bench.md) |
+| M3.1 — `wool bench` | P1 | L | M1.3 | shipped | [m3-01-wool-bench.md](m3-01-wool-bench.md) |
 | M3.2 — Benchmark history and trends | P1 | M | M3.1 | planned | [m3-02-benchmark-history-and-trends.md](m3-02-benchmark-history-and-trends.md) |
 | M3.3 — A/B comparison | P2 | M | M3.1, M3.2 | planned | [m3-03-a-b-comparison.md](m3-03-a-b-comparison.md) |
 | M3.4 — Calibration correction | P1 | M | M1.3, M3.1 | planned | [m3-04-calibration-correction.md](m3-04-calibration-correction.md) |

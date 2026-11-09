@@ -75,9 +75,10 @@ Shipped foundation:
 | Launch | Detached single-server and router modes, health wait, auto-port, PID/start-tick validation |
 | Config | TOML schema, layered inheritance, validation, provenance/explain, comment-preserving edits and override reset |
 | Fit | Dense, hybrid-attention, sliding-window, shared-KV and MoE-expert VRAM estimate, auto-fit solver with cache/CPU-offload fallbacks, saving a recommendation as a preset, GGUF metadata and tensor reader, AMD telemetry |
+| Measure | `wool bench` against an ephemeral, managed or explicit server; raw runs plus median/min/max, prompt/generation throughput and peak VRAM |
 | Observe | Dashboard, hardware sparklines, log tail, router `/metrics` and `/slots` |
 | Operate | Start/stop/restart, stale-state cleanup, log tailing |
-| CLI | `run`, `stop`, `status`, `logs`, `router`, `list`, `doctor`, `fit`, `config`, JSON for some commands |
+| CLI | `run`, `stop`, `status`, `logs`, `router`, `list`, `doctor`, `fit`, `bench`, `config`, JSON for some commands |
 
 Known gaps that shape the sequence:
 
@@ -85,7 +86,7 @@ Known gaps that shape the sequence:
 | --- | --- |
 | Observations are shown but not yet used to correct the estimate | Users still see a raw estimate; calibration is M3.4 |
 | Unknown tensor layouts and SWA patterns fall back to file size | Some architectures and quant types are marked approximate |
-| No benchmark or history | Preset tuning is folklore |
+| Benchmarks are recorded but there is no history or trend view | Comparing runs still means reading JSONL |
 | No crash detection, restart policy or alerts | A server can die silently |
 | Models are configured by hand | Setup friction before the first launch |
 | One standalone server and one router | No named instances or fleets |
@@ -459,7 +460,7 @@ boundary.
 | M2.2 | [Architecture-aware estimate](features/m2-02-architecture-aware-estimate.md) | M2 | P1 | L | M2.1 | shipped |
 | M2.3 | [Auto-fit solver](features/m2-03-auto-fit-solver.md) | M2 | P1 | M/L | M1.2, M2.1, M2.2 | shipped |
 | M2.4 | [Save recommendation as a preset](features/m2-04-save-a-recommendation-as-a-preset.md) | M2 | P2 | S | M2.3 | shipped |
-| M3.1 | [`wool bench`](features/m3-01-wool-bench.md) | M3 | P1 | L | M1.3 | planned |
+| M3.1 | [`wool bench`](features/m3-01-wool-bench.md) | M3 | P1 | L | M1.3 | shipped |
 | M3.2 | [Benchmark history and trends](features/m3-02-benchmark-history-and-trends.md) | M3 | P1 | M | M3.1 | planned |
 | M3.3 | [A/B comparison](features/m3-03-a-b-comparison.md) | M3 | P2 | M | M3.1, M3.2 | planned |
 | M3.4 | [Calibration correction](features/m3-04-calibration-correction.md) | M3 | P1 | M | M1.3, M3.1 | planned |

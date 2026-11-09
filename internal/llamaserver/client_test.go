@@ -144,6 +144,42 @@ llamacpp:requests_processing{slot="0"} 1
 	}
 }
 
+func TestComplete(t *testing.T) {
+	var got CompletionRequest
+	c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/completion" {
+			t.Errorf("request = %s %s", r.Method, r.URL.Path)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+			t.Fatal(err)
+		}
+		io.WriteString(w, `{
+			"content":"hello",
+			"tokens_evaluated":12,
+			"tokens_predicted":4,
+			"timings":{
+				"prompt_n":12,"prompt_ms":6,"prompt_per_second":2000,
+				"predicted_n":4,"predicted_ms":2,"predicted_per_second":2000
+			}
+		}`)
+	})
+	out, err := c.Complete(context.Background(), CompletionRequest{
+		Prompt: "hi", NPredict: 4, Temperature: 0, Seed: 42, CachePrompt: false,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Prompt != "hi" || got.NPredict != 4 || got.Temperature != 0 || got.Seed != 42 || got.CachePrompt || got.Stream {
+		t.Fatalf("request = %+v", got)
+	}
+	if out.Content != "hello" || out.TokensEvaluated != 12 || out.TokensPredicted != 4 {
+		t.Fatalf("completion = %+v", out)
+	}
+	if out.Timings == nil || out.Timings.PromptN != 12 || out.Timings.PredictedPerSecond != 2000 {
+		t.Fatalf("timings = %+v", out.Timings)
+	}
+}
+
 func TestParseMetricsToleratesGarbage(t *testing.T) {
 	m := ParseMetrics("nonsense\n# comment\nllamacpp:x_total not-a-number\nllamacpp:x_total 5\n")
 	if m.Raw["llamacpp:x_total"] != 5 {

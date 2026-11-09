@@ -21,11 +21,21 @@ import (
 // Version is the on-disk record schema. Bump it only for a breaking change.
 const Version = 1
 
-// Record is one launch observation.
+// Record kinds. An empty kind on disk is an observation from before benchmarks
+// were added.
+const (
+	KindObservation = "observation"
+	KindBench       = "bench"
+)
+
+// Record is one launch observation or benchmark run.
 type Record struct {
-	Version  int       `json:"version"`
-	At       time.Time `json:"at"`
-	Instance string    `json:"instance,omitempty"`
+	Version    int       `json:"version"`
+	At         time.Time `json:"at"`
+	Kind       string    `json:"kind,omitempty"`
+	Instance   string    `json:"instance,omitempty"`
+	Target     string    `json:"target,omitempty"`
+	TargetKind string    `json:"target_kind,omitempty"`
 
 	ModelID      string    `json:"model_id"`
 	ModelPath    string    `json:"model_path,omitempty"`
@@ -55,6 +65,61 @@ type Record struct {
 
 	Samples     []uint64 `json:"samples_bytes,omitempty"`
 	SampleCount int      `json:"sample_count"`
+
+	ConfigHash string `json:"config_hash,omitempty"`
+	Bench      *Bench `json:"bench,omitempty"`
+}
+
+// Bench is the engine-independent result of a benchmark. Record fields still
+// carry the model identity, hardware, estimate and observed VRAM so a
+// benchmark can be compared with a launch observation.
+type Bench struct {
+	Engine string `json:"engine"`
+	// Attached is true when the benchmark used an already-running server
+	// instead of starting an ephemeral one.
+	Attached bool   `json:"attached"`
+	URL      string `json:"url,omitempty"`
+
+	Runs             int  `json:"runs"`
+	Warmup           bool `json:"warmup"`
+	PromptTokens     int  `json:"prompt_tokens"`
+	GenerationTokens int  `json:"generation_tokens"`
+	Seed             int  `json:"seed"`
+
+	LoadMS    float64 `json:"load_ms,omitempty"`
+	LoadKnown bool    `json:"load_known"`
+
+	BaselineBytes  uint64 `json:"baseline_bytes,omitempty"`
+	PeakBytes      uint64 `json:"peak_bytes,omitempty"`
+	VRAMDeltaBytes uint64 `json:"vram_delta_bytes,omitempty"`
+	VRAMKnown      bool   `json:"vram_known"`
+	OwnBytes       uint64 `json:"own_bytes,omitempty"`
+	OwnKnown       bool   `json:"own_known"`
+
+	Samples []BenchRun `json:"samples"`
+	Median  BenchStats `json:"median"`
+	Min     BenchStats `json:"min"`
+	Max     BenchStats `json:"max"`
+}
+
+// BenchRun is one repetition.
+type BenchRun struct {
+	Index            int     `json:"index"`
+	PromptTokens     int     `json:"prompt_tokens"`
+	GenerationTokens int     `json:"generation_tokens"`
+	PromptTPS        float64 `json:"prompt_tps"`
+	GenerationTPS    float64 `json:"generation_tps"`
+	PromptMS         float64 `json:"prompt_ms,omitempty"`
+	GenerationMS     float64 `json:"generation_ms,omitempty"`
+	TotalMS          float64 `json:"total_ms"`
+	Source           string  `json:"source,omitempty"` // timings, metrics, wall or llama-bench
+}
+
+// BenchStats is one summary of a throughput series.
+type BenchStats struct {
+	PromptTPS     float64 `json:"prompt_tps"`
+	GenerationTPS float64 `json:"generation_tps"`
+	TotalMS       float64 `json:"total_ms,omitempty"`
 }
 
 // Shape identifies a launch configuration that can be compared with another.
@@ -114,6 +179,9 @@ func (s *Store) Append(r Record) error {
 	if r.Version == 0 {
 		r.Version = Version
 	}
+	if r.Kind == "" {
+		r.Kind = KindObservation
+	}
 	if r.At.IsZero() {
 		r.At = time.Now()
 	}
@@ -166,6 +234,9 @@ func (s *Store) All() ([]Record, error) {
 		if r.Version != Version || r.ModelID == "" {
 			continue
 		}
+		if r.Kind == "" {
+			r.Kind = KindObservation
+		}
 		out = append(out, r)
 	}
 	if err := sc.Err(); err != nil {
@@ -184,6 +255,12 @@ func (s *Store) Summary(shape Shape) (Summary, bool) {
 	found := false
 	count := 0
 	for _, r := range records {
+		// Benchmarks share the file but are not launch observations. Their
+		// observed bytes have different semantics, so they must not skew the
+		// observed-vs-estimate summary.
+		if r.Kind != KindObservation {
+			continue
+		}
 		if r.Shape() != shape {
 			continue
 		}

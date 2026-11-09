@@ -3,6 +3,8 @@
 package llamaserver
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -268,6 +270,26 @@ func sortedKeys(m map[string]string) []string {
 	}
 	sort.Strings(keys)
 	return keys
+}
+
+// ConfigHash identifies the launch options in argv. Host and port are ignored
+// because they do not change the model's performance shape; two servers with
+// the same hash should be benchmark-compatible.
+func ConfigHash(args []string) string {
+	canonical := make([]string, 0, len(args))
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		switch {
+		case a == "--host" || a == "--port":
+			i++
+		case strings.HasPrefix(a, "--host="), strings.HasPrefix(a, "--port="):
+			continue
+		default:
+			canonical = append(canonical, a)
+		}
+	}
+	sum := sha256.Sum256([]byte(strings.Join(canonical, "\x00")))
+	return hex.EncodeToString(sum[:6])
 }
 
 // CommandLine renders argv for logs and --dry-run output, quoting only when

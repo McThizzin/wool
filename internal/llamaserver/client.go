@@ -30,6 +30,15 @@ func NewClient(host string, port int) *Client {
 	}
 }
 
+// NewClientURL builds a client for an explicit base URL. It has no timeout
+// because a benchmark request is bounded by its context.
+func NewClientURL(base string) *Client {
+	return &Client{
+		BaseURL: strings.TrimRight(base, "/"),
+		HTTP:    &http.Client{},
+	}
+}
+
 // BaseURL returns an HTTP URL suitable for dialing a server that may be
 // listening on a wildcard address.
 func BaseURL(host string, port int) string {
@@ -61,6 +70,36 @@ func (e *APIError) Error() string {
 // Health is the /health response.
 type Health struct {
 	Status string `json:"status"`
+}
+
+// CompletionRequest is the subset of /completion options a benchmark needs.
+type CompletionRequest struct {
+	Prompt      string  `json:"prompt"`
+	NPredict    int     `json:"n_predict"`
+	Temperature float64 `json:"temperature"`
+	Seed        int     `json:"seed"`
+	CachePrompt bool    `json:"cache_prompt"`
+	Stream      bool    `json:"stream"`
+}
+
+// CompletionTimings is llama-server's own timing block. It is the most
+// accurate source because it excludes HTTP overhead.
+type CompletionTimings struct {
+	PromptN            int     `json:"prompt_n"`
+	PromptMS           float64 `json:"prompt_ms"`
+	PromptPerSecond    float64 `json:"prompt_per_second"`
+	PredictedN         int     `json:"predicted_n"`
+	PredictedMS        float64 `json:"predicted_ms"`
+	PredictedPerSecond float64 `json:"predicted_per_second"`
+}
+
+// Completion is the non-streaming /completion response.
+type Completion struct {
+	Content         string             `json:"content"`
+	Stop            bool               `json:"stop"`
+	TokensPredicted int                `json:"tokens_predicted"`
+	TokensEvaluated int                `json:"tokens_evaluated"`
+	Timings         *CompletionTimings `json:"timings"`
 }
 
 // ModelStatus is the router's per-model status block.
@@ -148,6 +187,15 @@ func (c *Client) Health(ctx context.Context) (Health, error) {
 		return h, err
 	}
 	return h, nil
+}
+
+// Complete sends one non-streaming completion request.
+func (c *Client) Complete(ctx context.Context, req CompletionRequest) (Completion, error) {
+	var out Completion
+	if err := c.post(ctx, "/completion", req, &out); err != nil {
+		return out, err
+	}
+	return out, nil
 }
 
 // WaitReady polls /health until it reports ok or the timeout expires.

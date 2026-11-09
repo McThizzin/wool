@@ -228,3 +228,17 @@ func TestCommandLine(t *testing.T) {
 		t.Fatalf("got %q, want %q", got, want)
 	}
 }
+
+func TestConfigHashIgnoresEndpoint(t *testing.T) {
+	base := []string{"--model", "/m.gguf", "-c", "4096", "--gpu-layers", "999"}
+	a := append(append([]string(nil), base...), "--host", "127.0.0.1", "--port", "8080")
+	b := append(append([]string(nil), base...), "--host", "0.0.0.0", "--port", "9090")
+	c := append(append([]string(nil), base...), "--host=127.0.0.1", "--port=8080")
+	if ConfigHash(a) != ConfigHash(b) || ConfigHash(a) != ConfigHash(c) {
+		t.Fatalf("endpoint changed the hash: %q %q %q", ConfigHash(a), ConfigHash(b), ConfigHash(c))
+	}
+	changed := append(append([]string(nil), base...), "-c", "8192")
+	if ConfigHash(a) == ConfigHash(changed) {
+		t.Fatal("a launch option change must change the hash")
+	}
+}

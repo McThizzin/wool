@@ -2,20 +2,12 @@
 
 `wool` is a terminal UI and CLI for running [`llama-server`](https://github.com/ggml-org/llama.cpp) on a Linux workstation. It is a single control surface for standalone launches and llama.cpp router mode: every server runs detached, survives the UI, and can be reattached later.
 
+![logo](assets/wool_logo.png)
+
 - **Single-server mode** — launch one preset or model, detached, then inspect logs and status from a later invocation.
 - **Router mode** — run `llama-server` in router mode with a generated `models.ini`, then load, unload, and inspect models through the router API.
 
-```text
-   [1] Dashboard  [2] Models  [3] Presets  [4] Router  [5] Hardware  [6] Logs      wool
-╭─ Dashboard ──────────────────────────────────────────── server up ─╮ ╭─ Status ──────────╮
-│ qwen-cyber-32k  preset                                             │ │ SERVER            │
-│ /home/user/models/Qwen3-4B-cybersecurity-heretic.gguf              │ │ running           │
-│ model qwen3-4b-cyber   ctx 32768   gpu layers 999                  │ │ ...               │
-│ budget 4.1 GiB / 5.5 GiB  ██████████████░░░░  76% fits             │ │ ROUTER            │
-╰────────────────────────────────────────────────────────────────────╯ ╰───────────────────╯
- press / to type a command                                              mocha
- tab switch · j/k move · enter start · x stop · r router · d doctor     120x40
-```
+![sreenshot](assets/wool_screenshot.png)
 
 ## Features
 
@@ -25,6 +17,7 @@
 - **Full router control.** Start/stop the router, list models, load/unload, reload presets, and read per-model stats and slots.
 - **VRAM-fit estimates.** Reads GGUF metadata and the tensor table, models llama.cpp's tensor placement, Gemma-style sliding-window/shared KV, hybrid attention (Qwen3.5/Qwen3-Next), per-layer KV heads, and quantized KV cache types. The UI shows `weights + KV + overhead`, the budget after reserve and other GPU usage, headroom and the limiting term.
 - **Auto-fit recommendations.** `wool fit TARGET` binary-searches the largest context that fits the budget, capped at the model's native context. When the requested settings cannot hold a useful context it ranks fallbacks: lower KV cache precision first, then CPU offload (using `n_cpu_moe` for MoE models). Every recommendation is within budget and includes weights, KV, overhead, headroom, the limiting term and the changes it makes. `--save-preset NAME` writes the result as a new preset.
+- **Benchmarks.** `wool bench TARGET` starts an ephemeral server, warms up, and records prompt and generation throughput over repeated runs with median/min/max and peak VRAM. It can attach to a matching managed server or any `--url`, and optionally drive `llama-bench`.
 - **Observed vs. estimate.** After a launch, `wool` records used VRAM at 5s and 15s and shows it next to the estimate with a sample count.
 - **Hardware telemetry.** CPU, RAM, AMD `amdgpu` VRAM, temperature, power, fan, and sparklines, with no extra daemon required.
 - **Preset and model editing.** Edit resolved launch options in the TUI; changes are written back to TOML with comments and ordering preserved. Changing `ctx`, cache type, `gpu_layers` or `n_cpu_moe` previews the new estimate without saving.
@@ -79,6 +72,8 @@ wool stop server
 wool [--config PATH]                 open the TUI
 wool doctor [--json]                 check binary, models and VRAM fit
 wool fit TARGET [options]            recommend settings that fit a VRAM budget
+wool bench TARGET [options]          benchmark prompt and generation throughput
+wool bench --url URL --model ID      benchmark an already-running server
 wool list [--json]                   list models and presets
 wool run TARGET [options]            start a model or preset detached
 wool stop [server|router|all]        stop detached servers
@@ -125,6 +120,31 @@ fits, the command exits with an actionable error instead of returning an
 over-budget configuration. Recommendations are advisory: use `F` in the editor
 to apply one to the draft, then `ctrl+s` to save the target's options, or `p`
 in the fit overlay to save it as a new preset.
+
+`wool bench TARGET` accepts a preset name or model ID plus `--runs N`
+(default 3), `--pp N` (prompt tokens, default 512), `--tg N` (generated
+tokens, default 128), `--engine server|llama-bench`, `--no-warmup` and
+`--json`. The default engine starts an ephemeral `llama-server` on a free port,
+waits for health, warms up, and sends the same temperature-0/seed-42 prompt for
+each run. If a managed `server` is already running with the same model and
+launch shape, it attaches instead of starting another. `--url URL --model ID`
+benchmarks an existing server without starting one. The ephemeral child is
+stopped on completion, error or `Ctrl-C`.
+
+Throughput prefers the completion response's `timings`, falls back to
+`/metrics` counter deltas, and finally to wall time; each raw run records which
+source was used. The command prints the median, minimum and maximum and appends
+one record with `kind: "bench"` to the measurement store. `--json` prints that
+record, including every raw run. The optional `llama-bench` engine uses the
+binary next to the configured `llama-server` or on `PATH`; the default engine
+does not need it.
+
+```sh
+wool bench qwen-cyber-32k
+wool bench lfm3-1-7b --runs 5 --pp 1024 --tg 256
+wool bench qwen-cyber-32k --engine llama-bench
+wool bench --url http://127.0.0.1:8080 --model qwen-cyber-32k --json
+```
 
 ## Configuration
 
@@ -183,7 +203,7 @@ Unset keys inherit; explicit zero/false values are preserved. `threads = 0` reso
 
 The dashboard and `wool doctor` decompose the estimate into weights, KV cache and overhead, then compare it with the budget for a new server: GPU total minus `router.memory_margin_mib` minus VRAM used by other processes. A running standalone server's own allocation is excluded so a restart is not charged twice. `wool doctor --json` includes the same `estimate`, `budget`, `headroom_bytes` and `limiting_term` fields. While editing, the preview updates as you type; `enter` commits and `esc` discards.
 
-Successful launches also record one observation in `$XDG_STATE_HOME/wool/measurements/runs.jsonl`: a pre-launch VRAM baseline, samples at 5s and 15s after health, and the estimate for that exact launch. The dashboard and doctor show `estimate 6.1 GiB · observed 6.4 GiB (n=3)`. The observation is a baseline-subtracted delta, not an exact model footprint, and it is recorded even when the baseline is unknown (shown as `observed unknown`). No correction factor is applied.
+Successful launches also record one observation in `$XDG_STATE_HOME/wool/measurements/runs.jsonl`: a pre-launch VRAM baseline, samples at 5s and 15s after health, and the estimate for that exact launch. The dashboard and doctor show `estimate 6.1 GiB · observed 6.4 GiB (n=3)`. The observation is a baseline-subtracted delta, not an exact model footprint, and it is recorded even when the baseline is unknown (shown as `observed unknown`). `wool bench` appends records with `kind: "bench"` to the same file; they carry the raw runs, throughput summary and peak VRAM, and are ignored by observed-vs-estimate summaries. No correction factor is applied.
 
 ### Custom themes
 
@@ -256,6 +276,7 @@ wool router stop
   logs/server.log
   logs/router.log
   router/models.ini         # generated, do not edit
+  measurements/runs.jsonl   # observations and benchmarks, append-only
 ```
 
 Logs are tailed from disk with a bounded read, so reattaching is cheap even for large logs.
@@ -280,7 +301,8 @@ internal/daemon/   detached process lifecycle, state, ports, logs
 internal/llamaserver/ argv/INI generation and HTTP API client
 internal/gguf/     GGUF metadata reader and VRAM estimate
 internal/fit/      auto-fit solver, fallback ranking and size parsing
-internal/measure/  observed VRAM JSONL store and launch capture
+internal/measure/  observed VRAM and benchmark JSONL store, launch capture
+internal/bench/    server and llama-bench runners, summaries, VRAM sampling
 internal/sysinfo/  /proc and AMD sysfs telemetry
 internal/doctor/   readiness checks
 internal/theme/    palettes, styles, icons, custom themes
@@ -301,7 +323,7 @@ go vet ./...
 go test -count=1 ./...
 ```
 
-Tests cover config parsing/merging/editing, effective-config diffs, GGUF metadata and tensor parsing, hybrid KV and MoE expert-offload estimation, dense/hybrid/MoE auto-fit solving and fallback ranking, measurement storage and capture, argv and INI generation, router metrics, daemon lifecycle and PID validation, sysinfo parsing, themes, and TUI rendering at multiple terminal sizes.
+Tests cover config parsing/merging/editing, effective-config diffs, GGUF metadata and tensor parsing, hybrid KV and MoE expert-offload estimation, dense/hybrid/MoE auto-fit solving and fallback ranking, measurement storage and capture, benchmark runners and `llama-bench` parsing, argv and INI generation, router metrics, daemon lifecycle and PID validation, sysinfo parsing, themes, and TUI rendering at multiple terminal sizes. Benchmark tests use a fake HTTP server and temporary state; none require `llama-bench`.
 
 ## Limitations
 
@@ -312,6 +334,7 @@ Tests cover config parsing/merging/editing, effective-config diffs, GGUF metadat
 - VRAM estimates fall back to a file-size approximation, and say so, when tensor metadata, a quantisation type or a tensor name is unsupported, or when a sliding-window layer pattern is unknown. Speculative decoding buffers are not modelled.
 - `wool fit` is advisory and inherits the estimator's approximation. It never recommends an over-budget configuration, but the recommendation is a starting point with headroom, not a guarantee.
 - `wool fit --save-preset` and the editor's `p` action write a preset from the fit-controlled values only. Replacing an existing preset updates those keys and leaves its other options and comments alone; there is no preset-diff preview before writing.
-- Observations are system-wide VRAM deltas; background GPU work makes them noisy. They are never presented as exact usage.
+- Observations and benchmark peak VRAM are system-wide deltas; background GPU work makes them noisy. They are never presented as exact usage, and an arbitrary `--url` server cannot report a VRAM delta.
+- Benchmarks are single-stream and short by default. They measure one fixed prompt rather than concurrent load, and prompt length is approximated by repeating a sentence instead of tokenizing.
 
 See [`docs/DESIGN.md`](docs/DESIGN.md) for the full design, lifecycle, and config reference, and [`docs/roadmap.md`](docs/roadmap.md) for what is planned and in what order.

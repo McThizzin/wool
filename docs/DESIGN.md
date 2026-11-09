@@ -62,7 +62,8 @@ supported. The router itself owns the lifecycle of the models it loads.
 | `internal/llamaserver` | single-server argv, router argv, `models.ini` generation, HTTP client |
 | `internal/gguf` | GGUF metadata reader and VRAM estimate |
 | `internal/fit` | auto-fit solver, context search, fallback ranking and size parsing |
-| `internal/measure` | observed-VRAM JSONL store and post-launch capture |
+| `internal/measure` | observed-VRAM and benchmark JSONL store, launch capture |
+| `internal/bench` | server and `llama-bench` benchmark runners, summaries, VRAM sampling |
 | `internal/sysinfo` | Linux `/proc` + AMD sysfs telemetry and graph history |
 | `internal/doctor` | readiness checks and report rendering |
 | `internal/ui` | ANSI-aware width fitting, panels, bars, sparklines |
@@ -683,6 +684,47 @@ Records are matched by model, context, cache types, GPU layers and
 `n_cpu_moe`; observations from a different launch shape are not compared.
 A corrupt line is skipped. There is no correction factor yet; that is M3.4.
 
+## Benchmarks
+
+`wool bench` reuses the same store with `kind: "bench"` records. The default
+`server` engine starts an ephemeral `llama-server` through
+`daemon.NewManagerWithDirs` using a temporary state and log directory, so the
+managed `server` state is never read or overwritten. The child is started on a
+free port and stopped on success, error or `Ctrl-C`; a deferred stop also
+covers early returns.
+
+Before starting, the command checks the managed `server`. If it is alive and its
+model ID and `llamaserver.ConfigHash` of the stored argv match the argv wool
+would generate for the target, the benchmark attaches instead of starting a
+second copy. The hash ignores host and port. Attachment also waits for health
+but does not restart or stop the server.
+
+Each run sends the same completion request: a repeated fixed sentence sized to
+the requested prompt token count, `temperature: 0`, `seed: 42`, prompt caching
+off and streaming off. Warm-up is one short completion unless `--no-warmup`.
+Throughput comes from the response's `timings` when present, then from
+`/metrics` counter deltas around the request, and finally from wall time. The
+wall fallback cannot separate prompt from generation, so both rates are
+conservative; every raw run records its `source`.
+
+`internal/bench` keeps the raw runs and computes the median, minimum and maximum
+for prompt tokens/s, generation tokens/s and total time. A VRAM sampler polls
+the primary GPU every 100ms during the run and records the peak. For an
+ephemeral or `llama-bench` run the baseline is sampled before launch, so the
+delta is the model's growth. For an attached managed server the baseline
+subtracts the server's own per-process VRAM when it is known; otherwise
+`vram_known` is false. An arbitrary `--url` server has no baseline and therefore
+never reports a delta. The record also carries the load time (ephemeral only),
+`llama-server` or `llama-bench` version, hardware, target and config hash.
+
+`--engine llama-bench` runs the external tool with `-o json`, passing the
+resolved model, prompt/generation sizes, runs, threads, GPU layers,
+`n_cpu_moe`, batch sizes, cache types and flash attention. The binary is looked
+up next to the configured `llama-server`, then on `PATH`. The default engine
+does not need it. `--url URL --model ID` skips config resolution when no config
+file exists; an unreadable config still fails. It cannot be combined with a
+target or `--engine llama-bench`.
+
 ## Doctor
 
 `wool doctor` checks:
@@ -707,6 +749,8 @@ overlay.
 wool [--config PATH]                 open the TUI
 wool doctor [--json]                 check binary, models and VRAM fit
 wool fit TARGET [options]            recommend settings that fit a VRAM budget
+wool bench TARGET [options]          benchmark prompt and generation throughput
+wool bench --url URL --model ID      benchmark an already-running server
 wool list [--json]                   list models and presets
 wool run TARGET [options]            start a model or preset detached
 wool stop [server|router|all]        stop detached servers
@@ -726,6 +770,10 @@ wool version
 valid with `--save-preset`; saving happens before output so a failure is
 reported without a success line. In JSON output, `saved_preset` is present when
 a preset was written.
+`bench` options: `--runs N`, `--pp N`, `--tg N`, `--engine server|llama-bench`,
+`--url URL`, `--model ID`, `--no-warmup`, `--json`. `--url` requires
+`--model` and cannot be combined with `TARGET` or `--engine llama-bench`.
+`--json` prints the record that was appended, including every raw run.
 `router start` accepts the same options as `run`. Unless `--no-wait` or
 `--dry-run` is used, `wool run` records one observation after health, so the
 command stays alive through the 5s/15s settle window.
@@ -735,14 +783,17 @@ command stays alive through the 5s/15s settle window.
 - `go test ./...` covers config parsing/merging/edits, provenance, key removal
   and effective-config diffs, GGUF metadata and estimates, dense/hybrid/MoE
   auto-fit solving and fallback ranking, argv/INI generation, router metrics
-  parsing, daemon lifecycle and PID validation, sysinfo parsing, and TUI
-  rendering at multiple sizes.
+  parsing, daemon lifecycle and PID validation, sysinfo parsing, benchmark
+  runners and `llama-bench` parsing, and TUI rendering at multiple sizes.
 - One view test renders every tab at 120x40, 100x30, 80x24, 60x20 and 40x12
   and asserts that no line exceeds the terminal width.
 - Editor tests write to a temporary config and reload it to verify the TOML
   round trip.
 - The daemon tests use short-lived `sleep`-style processes and temporary state
   directories; they do not touch the real XDG state.
+- Benchmark tests drive an `httptest` server for timings, metrics and wall-time
+  fallbacks, and use temporary XDG state for the CLI integration test. No test
+  requires `llama-bench`.
 
 Manual smoke test used during development:
 
@@ -782,3 +833,8 @@ criteria. The limitations below are the current state, not the plan.
   Router-managed models are supervised by `llama-server` itself.
 - Logs are tailed from disk on a timer rather than streamed; this is simple
   and works across reattachments.
+- Benchmarks are single-stream and short by default. They measure one fixed
+  prompt, not concurrent load, and prompt length is approximated by repeating a
+  sentence rather than tokenizing. Peak VRAM is a sampled system-wide delta and
+  is noisy when other GPU work runs; an arbitrary `--url` server cannot report a
+  delta at all.

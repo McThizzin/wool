@@ -107,6 +107,62 @@ func TestSummaryMatchesShapeAndCounts(t *testing.T) {
 	}
 }
 
+func TestStoreBenchKindAndSummaryIgnoresBench(t *testing.T) {
+	s := testStore(t)
+	shape := Record{
+		Version: Version, ModelID: "m", Ctx: 4096,
+		CacheTypeK: "q4_0", CacheTypeV: "q4_0", GPULayers: 999,
+	}
+	observation := shape
+	observation.ObservedBytes = 1 << 30
+	if err := s.Append(observation); err != nil {
+		t.Fatal(err)
+	}
+	bench := shape
+	bench.Kind = KindBench
+	bench.ObservedBytes = 99 << 30
+	bench.Bench = &Bench{
+		Engine: "server",
+		Runs:   2,
+		Samples: []BenchRun{
+			{Index: 1, PromptTPS: 100, GenerationTPS: 10},
+			{Index: 2, PromptTPS: 120, GenerationTPS: 12},
+		},
+		Median: BenchStats{PromptTPS: 110, GenerationTPS: 11},
+	}
+	if err := s.Append(bench); err != nil {
+		t.Fatal(err)
+	}
+	plain := shape
+	plain.At = time.Now()
+	plain.ObservedBytes = 2 << 30
+	if err := s.Append(plain); err != nil {
+		t.Fatal(err)
+	}
+
+	all, err := s.All()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(all) != 3 {
+		t.Fatalf("records = %d", len(all))
+	}
+	if all[0].Kind != KindObservation || all[1].Kind != KindBench || all[2].Kind != KindObservation {
+		t.Fatalf("kinds = %q %q %q", all[0].Kind, all[1].Kind, all[2].Kind)
+	}
+	if all[1].Bench == nil || len(all[1].Bench.Samples) != 2 {
+		t.Fatalf("bench payload = %+v", all[1].Bench)
+	}
+
+	sum, ok := s.Summary(shape.Shape())
+	if !ok {
+		t.Fatal("no summary")
+	}
+	if sum.Count != 2 || sum.ObservedBytes != 2<<30 {
+		t.Fatalf("summary = %+v (bench record must not be counted)", sum)
+	}
+}
+
 func TestCaptureRecordsDelta(t *testing.T) {
 	s := testStore(t)
 	values := []uint64{150, 160}
