@@ -314,6 +314,12 @@ func (m *Model) showConfigDiff() {
 		m.setToast("nothing selected to diff")
 		return
 	}
+	m.showConfigDiffFor(id, kind)
+}
+
+// showConfigDiffFor opens the M1.4 diff for an explicit target. It is shared by
+// the config tabs and the bench history view.
+func (m *Model) showConfigDiffFor(id, kind string) {
 	modelID, preset := "", ""
 	if kind == "preset" {
 		preset = id
@@ -349,18 +355,21 @@ func (m *Model) showHelp() {
 	m.overlay = strings.Join([]string{
 		"keys",
 		"  tab / shift+tab        next / previous tab",
-		"  1..6                   jump to a tab",
+		"  1..7                   jump to a tab",
 		"  j/k, up/down           move selection",
 		"  g/G                    first / last entry",
-		"  enter                  start selected server or load router model",
+		"  enter                  start selected server, load router model or compare bench runs",
 		"  s / x                  start / stop the standalone server",
 		"  S                      restart the selected preset or model",
 		"  r / R                  start / stop the router",
 		"  l / u                  load / unload the selected router model",
 		"  L                      focus the logs tab (enter toggles target)",
+		"  B                      focus the bench history tab",
+		"  space                  mark a benchmark run for comparison",
+		"  f                      follow logs, or cycle the bench target filter",
 		"  e                      edit the selected preset/model options",
 		"  F                      recommend settings that fit VRAM",
-		"  D                      show what the selected target changes",
+		"  D                      show the selected config diff (or bench run's target)",
 		"  d                      run doctor",
 		"  t                      next theme",
 		"  ctrl+r                 reload config.toml",
@@ -380,7 +389,8 @@ func (m *Model) showHelp() {
 		"  /fit                   open the option editor and fit overlay",
 		"  /doctor                run readiness checks",
 		"  /theme [name]          switch theme",
-		"  /tab NAME              jump to dashboard, models, presets, router, hardware, logs",
+		"  /tab NAME              jump to dashboard, models, presets, router, hardware, logs, bench",
+		"  /bench [TARGET|all]    show benchmark history, optionally filtered",
 		"  /logs [server|router]  show a log",
 		"  /quit                  exit",
 		"",
@@ -512,6 +522,19 @@ func (m *Model) runCommand(line string) (tea.Cmd, bool) {
 				m.setTab(tab(i))
 				break
 			}
+		}
+	case "bench":
+		target := ""
+		if len(args) > 0 && args[0] != "all" {
+			target = args[0]
+		}
+		m.benchFilter = target
+		m.benchSel = -1
+		m.setTab(tabBench)
+		if target == "" {
+			m.setToast("bench: all targets")
+		} else {
+			m.setToast("bench: " + target)
 		}
 	default:
 		m.setToast("unknown command /" + cmd + " (try /help)")

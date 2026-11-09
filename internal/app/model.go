@@ -32,11 +32,12 @@ const (
 	tabRouter
 	tabHardware
 	tabLogs
+	tabBench
 	tabCount
 )
 
-var tabNames = []string{"dashboard", "models", "presets", "router", "hardware", "logs"}
-var tabTitles = []string{"Dashboard", "Models", "Presets", "Router", "Hardware", "Logs"}
+var tabNames = []string{"dashboard", "models", "presets", "router", "hardware", "logs", "bench"}
+var tabTitles = []string{"Dashboard", "Models", "Presets", "Router", "Hardware", "Logs", "Bench"}
 
 func (t tab) String() string {
 	if t < 0 || int(t) >= len(tabNames) {
@@ -96,6 +97,17 @@ type Model struct {
 	logScroll int
 	follow    bool
 	logName   string
+
+	benchRuns    []measure.Record
+	benchAll     []measure.Record
+	benchTargets []string
+	benchSel     int
+	benchMarkAt  time.Time
+	benchMarkSet bool
+	benchFilter  string
+	benchErr     string
+	benchStamp   string
+	benchLoaded  bool
 
 	command  bool
 	input    textinput.Model
@@ -358,6 +370,9 @@ func (m *Model) applyTick(msg tickMsg) {
 	m.clampSelections()
 	if m.tab == tabDashboard || m.tab == tabLogs {
 		m.loadLogs()
+	}
+	if m.tab == tabBench {
+		m.loadBenchHistory()
 	}
 	m.ensureFit()
 }
@@ -676,6 +691,8 @@ func (m *Model) moveSelection(delta int) {
 	case tabRouter:
 		m.routerSel = clamp(m.routerSel+delta, 0, maxInt(0, len(m.routerModels)-1))
 		m.routerSelID = m.selectedRouterID()
+	case tabBench:
+		m.benchSel = clamp(m.benchSel+delta, 0, maxInt(0, len(m.benchRuns)-1))
 	default:
 		return
 	}
@@ -696,6 +713,9 @@ func (m *Model) setTab(t tab) {
 	}
 	if t == tabLogs || t == tabDashboard {
 		m.loadLogs()
+	}
+	if t == tabBench {
+		m.loadBenchHistory()
 	}
 	m.ensureFit()
 }

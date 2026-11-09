@@ -725,6 +725,34 @@ does not need it. `--url URL --model ID` skips config resolution when no config
 file exists; an unreadable config still fails. It cannot be combined with a
 target or `--engine llama-bench`.
 
+## Benchmark history
+
+`Store.BenchHistory` filters the same JSONL file to `kind: "bench"` records,
+sorts oldest first, and applies the newest-`limit` cut after filtering. A target
+matches either the recorded target name or the model ID, so a preset and the
+model it references can be queried separately. `BenchTargets` and
+`BenchTargetName` provide the TUI filter list and display label. The CLI prints
+a tabwriter table; `--json` prints the same `[]measure.Record` the store
+returned.
+
+The store is bounded by record count rather than bytes: `DefaultMaxRecords` is
+5000. `Append` writes the line, then compacts best-effort while holding a
+sibling `runs.jsonl.lock` file with `syscall.Flock`. Compaction reads the file,
+keeps the newest records, writes a temporary file in the same directory, and
+renames it over the original. A failed compaction leaves a larger file but does
+not turn a durable append into an error. The lock matters because compaction
+rewrites the whole file and must not race an append from another wool process.
+
+The TUI Bench tab reloads on the normal poll tick and when the tab opens. It
+shows prompt and generation sparklines over the filtered runs and a table with
+timestamp, target, prompt t/s, generation t/s, VRAM, load time and config hash.
+`space` marks a run and `enter` compares the marked run with the selected one;
+the comparison reuses the M1.4 two-column field layout for the recorded launch
+fields and adds throughput, VRAM and load-time deltas. `f` cycles the target
+filter. `D` opens the M1.4 diff for the selected run's target when that preset
+or model is still in the config, so a historical run can be checked against the
+current configuration.
+
 ## Doctor
 
 `wool doctor` checks:
@@ -751,6 +779,7 @@ wool doctor [--json]                 check binary, models and VRAM fit
 wool fit TARGET [options]            recommend settings that fit a VRAM budget
 wool bench TARGET [options]          benchmark prompt and generation throughput
 wool bench --url URL --model ID      benchmark an already-running server
+wool bench history [TARGET]          show recorded benchmark runs
 wool list [--json]                   list models and presets
 wool run TARGET [options]            start a model or preset detached
 wool stop [server|router|all]        stop detached servers
@@ -774,6 +803,8 @@ a preset was written.
 `--url URL`, `--model ID`, `--no-warmup`, `--json`. `--url` requires
 `--model` and cannot be combined with `TARGET` or `--engine llama-bench`.
 `--json` prints the record that was appended, including every raw run.
+`bench history` options: `--limit N` (default 20) and `--json`; `TARGET` is
+optional and filters by target name or model ID.
 `router start` accepts the same options as `run`. Unless `--no-wait` or
 `--dry-run` is used, `wool run` records one observation after health, so the
 command stays alive through the 5s/15s settle window.
@@ -784,7 +815,8 @@ command stays alive through the 5s/15s settle window.
   and effective-config diffs, GGUF metadata and estimates, dense/hybrid/MoE
   auto-fit solving and fallback ranking, argv/INI generation, router metrics
   parsing, daemon lifecycle and PID validation, sysinfo parsing, benchmark
-  runners and `llama-bench` parsing, and TUI rendering at multiple sizes.
+  runners, history filtering and store rotation, `llama-bench` parsing, and TUI
+  rendering at multiple sizes.
 - One view test renders every tab at 120x40, 100x30, 80x24, 60x20 and 40x12
   and asserts that no line exceeds the terminal width.
 - Editor tests write to a temporary config and reload it to verify the TOML
@@ -838,3 +870,6 @@ criteria. The limitations below are the current state, not the plan.
   sentence rather than tokenizing. Peak VRAM is a sampled system-wide delta and
   is noisy when other GPU work runs; an arbitrary `--url` server cannot report a
   delta at all.
+- The measurement store is capped at 5000 records. Old runs are dropped without
+  warning, and a two-run comparison only diffs the launch fields wool recorded;
+  it is not a statistical test.

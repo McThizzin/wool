@@ -269,3 +269,89 @@ func TestCaptureCancelledBeforeWrite(t *testing.T) {
 		t.Fatalf("cancelled capture wrote %d records", len(got))
 	}
 }
+
+func TestBenchHistoryFiltersAndLimits(t *testing.T) {
+	s := testStore(t)
+	add := func(target, model string, at int64, gen float64) {
+		t.Helper()
+		r := Record{
+			Version: Version, Kind: KindBench, Target: target, ModelID: model,
+			At:    time.Unix(at, 0),
+			Bench: &Bench{Engine: "server", Median: BenchStats{GenerationTPS: gen}},
+		}
+		if err := s.Append(r); err != nil {
+			t.Fatal(err)
+		}
+	}
+	add("preset-a", "model-x", 1, 10)
+	add("preset-b", "model-y", 2, 20)
+	add("preset-a", "model-x", 3, 30)
+	if err := s.Append(Record{Version: Version, ModelID: "model-x", At: time.Unix(4, 0)}); err != nil {
+		t.Fatal(err)
+	}
+
+	all, err := s.BenchHistory("", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(all) != 3 || !all[0].At.Equal(time.Unix(1, 0)) || !all[2].At.Equal(time.Unix(3, 0)) {
+		t.Fatalf("history = %+v", all)
+	}
+
+	onlyA, err := s.BenchHistory("preset-a", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(onlyA) != 2 {
+		t.Fatalf("preset-a history = %d", len(onlyA))
+	}
+
+	byModel, err := s.BenchHistory("model-y", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(byModel) != 1 || byModel[0].Bench.Median.GenerationTPS != 20 {
+		t.Fatalf("model-y history = %+v", byModel)
+	}
+
+	limited, err := s.BenchHistory("preset-a", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(limited) != 1 || !limited[0].At.Equal(time.Unix(3, 0)) {
+		t.Fatalf("limited history = %+v", limited)
+	}
+
+	targets := BenchTargets(all)
+	if !reflect.DeepEqual(targets, []string{"preset-a", "preset-b"}) {
+		t.Fatalf("targets = %v", targets)
+	}
+}
+
+func TestStoreCompactsAtMaxRecords(t *testing.T) {
+	old := maxRecords
+	maxRecords = 3
+	defer func() { maxRecords = old }()
+
+	s := testStore(t)
+	for i := 0; i < 5; i++ {
+		r := Record{
+			Version: Version, Kind: KindBench, ModelID: "m", Target: "t",
+			At:    time.Unix(int64(i), 0),
+			Bench: &Bench{Engine: "server"},
+		}
+		if err := s.Append(r); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, err := s.All()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 3 {
+		t.Fatalf("records = %d, want 3", len(got))
+	}
+	if got[0].At.Unix() != 2 || got[2].At.Unix() != 4 {
+		t.Fatalf("kept records = %v .. %v, want 2..4", got[0].At, got[2].At)
+	}
+}

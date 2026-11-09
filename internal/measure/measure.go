@@ -7,10 +7,12 @@ package measure
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
+	"syscall"
 	"time"
 
 	"wool/internal/config"
@@ -20,6 +22,15 @@ import (
 
 // Version is the on-disk record schema. Bump it only for a breaking change.
 const Version = 1
+
+// DefaultMaxRecords bounds the store. After an append pushes the file over the
+// cap, the oldest records are dropped and the newest DefaultMaxRecords are
+// rewritten atomically. Rotation is best-effort; the just-appended record is
+// never lost.
+const DefaultMaxRecords = 5000
+
+// maxRecords is a variable so tests can exercise rotation with a small cap.
+var maxRecords = DefaultMaxRecords
 
 // Record kinds. An empty kind on disk is an observation from before benchmarks
 // were added.
@@ -193,6 +204,12 @@ func (s *Store) Append(r Record) error {
 	if err := os.MkdirAll(filepath.Dir(s.Path), 0o700); err != nil {
 		return err
 	}
+	unlock, err := s.lock()
+	if err != nil {
+		return err
+	}
+	defer unlock()
+
 	f, err := os.OpenFile(s.Path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
 	if err != nil {
 		return err
@@ -201,7 +218,83 @@ func (s *Store) Append(r Record) error {
 		f.Close()
 		return err
 	}
-	return f.Close()
+	if err := f.Close(); err != nil {
+		return err
+	}
+	// The record is already durable. A failed compaction leaves a larger file
+	// but must not turn a successful append into an error.
+	_ = s.compactLocked()
+	return nil
+}
+
+// lock serializes writers with a sibling lock file. Appends are already atomic
+// at the line level, but compaction rewrites the file and must not race an
+// append from another wool process.
+func (s *Store) lock() (func(), error) {
+	f, err := os.OpenFile(s.Path+".lock", os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return nil, err
+	}
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
+		f.Close()
+		return nil, err
+	}
+	return func() {
+		_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+		_ = f.Close()
+	}, nil
+}
+
+// compactLocked rewrites the store when it holds more than maxRecords. The
+// caller must hold the store lock.
+func (s *Store) compactLocked() error {
+	if maxRecords <= 0 {
+		return nil
+	}
+	records, err := s.All()
+	if err != nil {
+		return err
+	}
+	if len(records) <= maxRecords {
+		return nil
+	}
+	records = records[len(records)-maxRecords:]
+
+	var buf bytes.Buffer
+	for _, r := range records {
+		b, err := json.Marshal(r)
+		if err != nil {
+			return err
+		}
+		buf.Write(b)
+		buf.WriteByte('\n')
+	}
+
+	tmp, err := os.CreateTemp(filepath.Dir(s.Path), ".runs-*.jsonl")
+	if err != nil {
+		return err
+	}
+	name := tmp.Name()
+	fail := func(err error) error {
+		_ = tmp.Close()
+		_ = os.Remove(name)
+		return err
+	}
+	if err := tmp.Chmod(0o600); err != nil {
+		return fail(err)
+	}
+	if _, err := tmp.Write(buf.Bytes()); err != nil {
+		return fail(err)
+	}
+	if err := tmp.Close(); err != nil {
+		_ = os.Remove(name)
+		return err
+	}
+	if err := os.Rename(name, s.Path); err != nil {
+		_ = os.Remove(name)
+		return err
+	}
+	return nil
 }
 
 // All returns every readable record in file order. Empty and corrupt lines are

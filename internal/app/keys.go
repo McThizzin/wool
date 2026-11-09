@@ -10,7 +10,7 @@ import (
 
 var commandNames = []string{
 	"start", "restart", "stop", "router", "load", "unload", "reload",
-	"edit", "fit", "doctor", "theme", "tab", "logs", "help", "quit",
+	"edit", "fit", "doctor", "theme", "tab", "bench", "logs", "help", "quit",
 }
 
 func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -47,11 +47,14 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.openCommand("")
 	case "esc":
 		m.toast = ""
+		if m.tab == tabBench {
+			m.clearBenchMark()
+		}
 	case "tab":
 		m.setTab((m.tab + 1) % tabCount)
 	case "shift+tab":
 		m.setTab((m.tab - 1 + tabCount) % tabCount)
-	case "1", "2", "3", "4", "5", "6":
+	case "1", "2", "3", "4", "5", "6", "7":
 		m.setTab(tab(msg.String()[0] - '1'))
 	case "j", "down":
 		switch m.tab {
@@ -85,6 +88,10 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	case "enter":
 		return m, m.enterAction()
+	case " ":
+		if m.tab == tabBench {
+			m.benchMarkAction()
+		}
 	case "s":
 		if id, kind, ok := m.target(); ok {
 			return m, m.startTarget(id, kind)
@@ -109,6 +116,8 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	case "L":
 		m.setTab(tabLogs)
+	case "B":
+		m.setTab(tabBench)
 	case "e":
 		m.openEditor()
 	case "F":
@@ -121,15 +130,22 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "d":
 		return m, m.runDoctor()
 	case "D":
-		m.showConfigDiff()
+		if m.tab == tabBench {
+			m.showBenchConfigDiff()
+		} else {
+			m.showConfigDiff()
+		}
 	case "t":
 		m.cycleTheme(1)
 	case "f":
-		if m.tab == tabLogs {
+		switch m.tab {
+		case tabLogs:
 			m.follow = !m.follow
 			if m.follow {
 				m.logScroll = 0
 			}
+		case tabBench:
+			m.cycleBenchFilter()
 		}
 	case "ctrl+r":
 		m.reloadConfig()
@@ -161,6 +177,8 @@ func (m *Model) enterAction() tea.Cmd {
 		m.follow = true
 		m.logScroll = 0
 		m.loadLogs()
+	case tabBench:
+		m.showBenchCompare()
 	}
 	return nil
 }
@@ -286,6 +304,8 @@ func (m *Model) modelCandidates(cmd string) []string {
 		return theme.Order()
 	case "tab":
 		return tabNames
+	case "bench":
+		return append([]string{"all"}, m.benchTargets...)
 	}
 	return nil
 }
