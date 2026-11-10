@@ -63,7 +63,7 @@ supported. The router itself owns the lifecycle of the models it loads.
 | `internal/gguf` | GGUF metadata reader and VRAM estimate |
 | `internal/fit` | auto-fit solver, context search, fallback ranking and size parsing |
 | `internal/measure` | observed-VRAM and benchmark JSONL store, launch capture |
-| `internal/bench` | server and `llama-bench` benchmark runners, summaries, VRAM sampling |
+| `internal/bench` | server and `llama-bench` benchmark runners, summaries, VRAM sampling, A/B comparison |
 | `internal/sysinfo` | Linux `/proc` + AMD sysfs telemetry and graph history |
 | `internal/doctor` | readiness checks and report rendering |
 | `internal/ui` | ANSI-aware width fitting, panels, bars, sparklines |
@@ -753,6 +753,34 @@ filter. `D` opens the M1.4 diff for the selected run's target when that preset
 or model is still in the config, so a historical run can be checked against the
 current configuration.
 
+## A/B comparison
+
+`wool bench compare A B` shares the bench parser but requires exactly two
+different config targets and rejects `--url`/`--model`. `--runs N` is rounds per
+target, so the command performs `2N` measured completions. `interleavedOrder`
+alternates the target each round (`A B B A A B …`) so neither side always runs
+on the hotter machine.
+
+Each round calls `runBenchCompareRound`, which starts a fresh ephemeral server,
+takes one measured completion and stops it before the next round. The two models
+therefore never occupy VRAM together. `compareSide` aggregates a target's rounds
+into a `bench.Side`: samples keep their interleaved order, load is the median
+across rounds, and VRAM comes from the round with the largest known delta so the
+stored record stays conservative. Each side is also written as a normal
+`kind: "bench"` record, which keeps history and trends working unchanged.
+
+The shared model lives in `internal/bench/compare.go`. `ComparisonVersion` is 1
+and the JSON shape is stable. `SpreadOf` computes `(max-min)/median` per series;
+`BuildWarnings` adds a warning when prompt or generation spread exceeds
+`NoiseThreshold` (10%), and when the GPU, GPU driver or `llama-server` version
+differs between sides. `Delta` is `(B-A)/A`. These are coarse guards, not a
+significance test.
+
+The TUI builds sides with `bench.SideFromRecord`, so it can compare stored runs
+without a live server. `/bench compare A B` looks up the newest recorded run for
+each target and opens the same overlay used by mark/enter, including spread, raw
+runs and warnings.
+
 ## Doctor
 
 `wool doctor` checks:
@@ -780,6 +808,7 @@ wool fit TARGET [options]            recommend settings that fit a VRAM budget
 wool bench TARGET [options]          benchmark prompt and generation throughput
 wool bench --url URL --model ID      benchmark an already-running server
 wool bench history [TARGET]          show recorded benchmark runs
+wool bench compare A B [options]     interleaved A/B benchmark comparison
 wool list [--json]                   list models and presets
 wool run TARGET [options]            start a model or preset detached
 wool stop [server|router|all]        stop detached servers
@@ -805,6 +834,11 @@ a preset was written.
 `--json` prints the record that was appended, including every raw run.
 `bench history` options: `--limit N` (default 20) and `--json`; `TARGET` is
 optional and filters by target name or model ID.
+`bench compare` takes exactly two different targets and accepts `--runs N`
+(rounds per target, default 3), `--pp N`, `--tg N`,
+`--engine server|llama-bench`, `--no-warmup` and `--json`. It rejects `--url` and
+`--model`. `--json` prints the stable `Comparison` (version 1), not a store
+record; the two per-side bench records are still appended.
 `router start` accepts the same options as `run`. Unless `--no-wait` or
 `--dry-run` is used, `wool run` records one observation after health, so the
 command stays alive through the 5s/15s settle window.
@@ -815,8 +849,9 @@ command stays alive through the 5s/15s settle window.
   and effective-config diffs, GGUF metadata and estimates, dense/hybrid/MoE
   auto-fit solving and fallback ranking, argv/INI generation, router metrics
   parsing, daemon lifecycle and PID validation, sysinfo parsing, benchmark
-  runners, history filtering and store rotation, `llama-bench` parsing, and TUI
-  rendering at multiple sizes.
+  runners, history filtering and store rotation, `llama-bench` parsing,
+  interleaved A/B comparison and its noise warnings, and TUI rendering at
+  multiple sizes.
 - One view test renders every tab at 120x40, 100x30, 80x24, 60x20 and 40x12
   and asserts that no line exceeds the terminal width.
 - Editor tests write to a temporary config and reload it to verify the TOML
@@ -872,4 +907,6 @@ criteria. The limitations below are the current state, not the plan.
   delta at all.
 - The measurement store is capped at 5000 records. Old runs are dropped without
   warning, and a two-run comparison only diffs the launch fields wool recorded;
-  it is not a statistical test.
+  it is not a statistical test. A/B comparison uses the same coarse 10% spread
+  guard for its noise warning, so a small delta on a shared machine can still be
+  noise even when no warning is shown.

@@ -391,6 +391,7 @@ func (m *Model) showHelp() {
 		"  /theme [name]          switch theme",
 		"  /tab NAME              jump to dashboard, models, presets, router, hardware, logs, bench",
 		"  /bench [TARGET|all]    show benchmark history, optionally filtered",
+		"  /bench compare A B     compare the newest run of two targets",
 		"  /logs [server|router]  show a log",
 		"  /quit                  exit",
 		"",
@@ -524,6 +525,10 @@ func (m *Model) runCommand(line string) (tea.Cmd, bool) {
 			}
 		}
 	case "bench":
+		if len(args) > 0 && args[0] == "compare" {
+			m.benchCompareCommand(args[1:])
+			break
+		}
 		target := ""
 		if len(args) > 0 && args[0] != "all" {
 			target = args[0]

@@ -17,7 +17,7 @@
 - **Full router control.** Start/stop the router, list models, load/unload, reload presets, and read per-model stats and slots.
 - **VRAM-fit estimates.** Reads GGUF metadata and the tensor table, models llama.cpp's tensor placement, Gemma-style sliding-window/shared KV, hybrid attention (Qwen3.5/Qwen3-Next), per-layer KV heads, and quantized KV cache types. The UI shows `weights + KV + overhead`, the budget after reserve and other GPU usage, headroom and the limiting term.
 - **Auto-fit recommendations.** `wool fit TARGET` binary-searches the largest context that fits the budget, capped at the model's native context. When the requested settings cannot hold a useful context it ranks fallbacks: lower KV cache precision first, then CPU offload (using `n_cpu_moe` for MoE models). Every recommendation is within budget and includes weights, KV, overhead, headroom, the limiting term and the changes it makes. `--save-preset NAME` writes the result as a new preset.
-- **Benchmarks and history.** `wool bench TARGET` starts an ephemeral server, warms up, and records prompt and generation throughput over repeated runs with median/min/max and peak VRAM. It can attach to a matching managed server or any `--url`, and optionally drive `llama-bench`. `wool bench history` and the Bench tab show past runs, trends and a two-run comparison.
+- **Benchmarks and history.** `wool bench TARGET` starts an ephemeral server, warms up, and records prompt and generation throughput over repeated runs with median/min/max and peak VRAM. It can attach to a matching managed server or any `--url`, and optionally drive `llama-bench`. `wool bench history` and the Bench tab show past runs, trends and a two-run comparison. `wool bench compare A B` runs two targets interleaved and reports the median, spread and percentage delta.
 - **Observed vs. estimate.** After a launch, `wool` records used VRAM at 5s and 15s and shows it next to the estimate with a sample count.
 - **Hardware telemetry.** CPU, RAM, AMD `amdgpu` VRAM, temperature, power, fan, and sparklines, with no extra daemon required.
 - **Preset and model editing.** Edit resolved launch options in the TUI; changes are written back to TOML with comments and ordering preserved. Changing `ctx`, cache type, `gpu_layers` or `n_cpu_moe` previews the new estimate without saving.
@@ -75,6 +75,7 @@ wool fit TARGET [options]            recommend settings that fit a VRAM budget
 wool bench TARGET [options]          benchmark prompt and generation throughput
 wool bench --url URL --model ID      benchmark an already-running server
 wool bench history [TARGET]          show recorded benchmark runs
+wool bench compare A B [options]     interleaved A/B benchmark comparison
 wool list [--json]                   list models and presets
 wool run TARGET [options]            start a model or preset detached
 wool stop [server|router|all]        stop detached servers
@@ -162,11 +163,29 @@ wool bench history qwen-cyber-32k --limit 10
 wool bench history --json
 ```
 
+`wool bench compare A B` measures two presets or models in the same session.
+`--runs N` is the number of rounds per target (default 3), so it performs `2N`
+measured completions. Rounds alternate order (`A B B A …`) to reduce thermal
+drift, and both targets use the same prompt, seed and generation length. Each
+round starts a fresh ephemeral server, so the two models never occupy VRAM
+together; each side is stored as its own `kind: "bench"` record. The report shows
+the median, relative spread and percentage delta for prompt and generation
+throughput, the raw generation runs, and warnings when the spread is above 10%
+or the GPU, driver or `llama-server` version changed between sides. `--json`
+prints the stable comparison schema (version 1). `--url` and `--model` are not
+supported here; compare resolves both targets from the config.
+
+```sh
+wool bench compare qwen-cyber-32k qwen-cyber-65k
+wool bench compare lfm3-1-7b lfm3-1-7b-q8 --runs 5 --json
+```
+
 In the TUI, `B` opens the Bench tab. It shows prompt and generation sparklines
 over the filtered runs, a run table, and full details for the selected run.
 `space` marks a run, `enter` compares the marked and selected runs, `f` cycles
 the target filter, and `D` opens the M1.4 config diff for the selected run's
-target.
+target. `/bench compare A B` opens the newest recorded run of each target in the
+same comparison overlay.
 
 ## Configuration
 
@@ -328,7 +347,7 @@ internal/llamaserver/ argv/INI generation and HTTP API client
 internal/gguf/     GGUF metadata reader and VRAM estimate
 internal/fit/      auto-fit solver, fallback ranking and size parsing
 internal/measure/  observed VRAM and benchmark JSONL store, launch capture
-internal/bench/    server and llama-bench runners, summaries, VRAM sampling
+internal/bench/    server and llama-bench runners, summaries, VRAM sampling, A/B comparison
 internal/sysinfo/  /proc and AMD sysfs telemetry
 internal/doctor/   readiness checks
 internal/theme/    palettes, styles, icons, custom themes
@@ -349,7 +368,7 @@ go vet ./...
 go test -count=1 ./...
 ```
 
-Tests cover config parsing/merging/editing, effective-config diffs, GGUF metadata and tensor parsing, hybrid KV and MoE expert-offload estimation, dense/hybrid/MoE auto-fit solving and fallback ranking, measurement storage and capture, benchmark history filtering and store rotation, benchmark runners and `llama-bench` parsing, argv and INI generation, router metrics, daemon lifecycle and PID validation, sysinfo parsing, themes, and TUI rendering at multiple terminal sizes. Benchmark tests use a fake HTTP server and temporary state; none require `llama-bench`.
+Tests cover config parsing/merging/editing, effective-config diffs, GGUF metadata and tensor parsing, hybrid KV and MoE expert-offload estimation, dense/hybrid/MoE auto-fit solving and fallback ranking, measurement storage and capture, benchmark history filtering and store rotation, benchmark runners and `llama-bench` parsing, interleaved A/B comparison and its noise warnings, argv and INI generation, router metrics, daemon lifecycle and PID validation, sysinfo parsing, themes, and TUI rendering at multiple terminal sizes. Benchmark tests use a fake HTTP server and temporary state; none require `llama-bench`.
 
 ## Limitations
 
@@ -362,6 +381,7 @@ Tests cover config parsing/merging/editing, effective-config diffs, GGUF metadat
 - `wool fit --save-preset` and the editor's `p` action write a preset from the fit-controlled values only. Replacing an existing preset updates those keys and leaves its other options and comments alone; there is no preset-diff preview before writing.
 - Observations and benchmark peak VRAM are system-wide deltas; background GPU work makes them noisy. They are never presented as exact usage, and an arbitrary `--url` server cannot report a VRAM delta.
 - Benchmarks are single-stream and short by default. They measure one fixed prompt rather than concurrent load, and prompt length is approximated by repeating a sentence instead of tokenizing.
+- A/B comparison warns when spread is above 10%, but that is a coarse guard, not a significance test. Small deltas on a shared machine can still be noise; use more rounds before trusting them.
 - The measurement store is bounded at 5000 records. The oldest runs are dropped without warning; export anything you need to keep with `wool bench history --json`.
 
 See [`docs/DESIGN.md`](docs/DESIGN.md) for the full design, lifecycle, and config reference, and [`docs/roadmap.md`](docs/roadmap.md) for what is planned and in what order.

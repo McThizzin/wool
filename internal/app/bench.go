@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"wool/internal/bench"
 	"wool/internal/measure"
 	"wool/internal/ui"
 )
@@ -162,6 +163,16 @@ func (m *Model) showBenchCompare() {
 		m.setToast("pick a different run to compare")
 		return
 	}
+	m.showBenchCompareRecords(base, next)
+}
+
+// showBenchCompareRecords is the shared comparison presentation. It is used by
+// the mark/enter flow and by /bench compare A B.
+func (m *Model) showBenchCompareRecords(base, next measure.Record) {
+	a := bench.SideFromRecord(base)
+	b := bench.SideFromRecord(next)
+	cmp := bench.Comparison{Version: bench.ComparisonVersion, A: a, B: b}
+	cmp.BuildWarnings()
 
 	lines := []string{
 		"marked   " + benchRunLabel(base),
@@ -191,25 +202,91 @@ func (m *Model) showBenchCompare() {
 	}
 
 	lines = append(lines, "", "results")
-	a, b := base.Bench, next.Bench
-	if a != nil && b != nil {
-		lines = append(lines,
-			fmt.Sprintf("  %-14s %-18s →  %s", "prompt t/s",
-				fmt.Sprintf("%.1f", a.Median.PromptTPS),
-				fmt.Sprintf("%.1f %s", b.Median.PromptTPS, benchDelta(a.Median.PromptTPS, b.Median.PromptTPS))),
-			fmt.Sprintf("  %-14s %-18s →  %s", "gen t/s",
-				fmt.Sprintf("%.1f", a.Median.GenerationTPS),
-				fmt.Sprintf("%.1f %s", b.Median.GenerationTPS, benchDelta(a.Median.GenerationTPS, b.Median.GenerationTPS))),
-			fmt.Sprintf("  %-14s %-18s →  %s", "total",
-				fmt.Sprintf("%.0f ms", a.Median.TotalMS),
-				fmt.Sprintf("%.0f ms", b.Median.TotalMS)),
-			fmt.Sprintf("  %-14s %-18s →  %s", "vram", benchVRAM(a), benchVRAM(b)),
-			fmt.Sprintf("  %-14s %-18s →  %s", "load", benchLoad(a), benchLoad(b)),
-		)
+	lines = append(lines,
+		fmt.Sprintf("  %-14s %-18s %-18s %s", "metric", "A", "B", "delta"),
+		fmt.Sprintf("  %-14s %-18s %-18s %s", "prompt t/s",
+			benchStat(a.Median.PromptTPS, a.Spread.PromptTPS),
+			benchStat(b.Median.PromptTPS, b.Spread.PromptTPS),
+			benchDelta(a.Median.PromptTPS, b.Median.PromptTPS)),
+		fmt.Sprintf("  %-14s %-18s %-18s %s", "gen t/s",
+			benchStat(a.Median.GenerationTPS, a.Spread.GenerationTPS),
+			benchStat(b.Median.GenerationTPS, b.Spread.GenerationTPS),
+			benchDelta(a.Median.GenerationTPS, b.Median.GenerationTPS)),
+		fmt.Sprintf("  %-14s %-18s %-18s %s", "total",
+			fmt.Sprintf("%.0f ms", a.Median.TotalMS),
+			fmt.Sprintf("%.0f ms", b.Median.TotalMS),
+			benchDelta(a.Median.TotalMS, b.Median.TotalMS)),
+		fmt.Sprintf("  %-14s %-18s %-18s", "vram", benchVRAM(base.Bench), benchVRAM(next.Bench)),
+		fmt.Sprintf("  %-14s %-18s %-18s", "load", benchLoad(base.Bench), benchLoad(next.Bench)),
+	)
+
+	if len(a.Samples) > 0 || len(b.Samples) > 0 {
+		lines = append(lines, "", "raw runs (gen t/s)")
+		if len(a.Samples) > 0 {
+			lines = append(lines, "  A  "+sampleList(a.Samples))
+		}
+		if len(b.Samples) > 0 {
+			lines = append(lines, "  B  "+sampleList(b.Samples))
+		}
 	}
+
+	lines = append(lines, "", "warnings")
+	if len(cmp.Warnings) == 0 {
+		lines = append(lines, "  none")
+	} else {
+		for _, warning := range cmp.Warnings {
+			lines = append(lines, "  - "+warning)
+		}
+	}
+
 	m.overlayTitle = "bench compare · " + measure.BenchTargetName(next)
 	m.overlayScroll = 0
 	m.overlay = strings.Join(lines, "\n")
+}
+
+// benchCompareCommand opens a comparison for the newest recorded run of each
+// named target.
+func (m *Model) benchCompareCommand(names []string) {
+	if len(names) != 2 {
+		m.setToast("bench compare: want two targets")
+		return
+	}
+	m.setTab(tabBench)
+	a, ok := m.latestBench(names[0])
+	if !ok {
+		m.setToast("bench: no runs for " + names[0])
+		return
+	}
+	b, ok := m.latestBench(names[1])
+	if !ok {
+		m.setToast("bench: no runs for " + names[1])
+		return
+	}
+	m.benchFilter = ""
+	m.loadBenchHistory()
+	m.benchMarkAt, m.benchMarkSet = a.At, true
+	for i, r := range m.benchRuns {
+		if r.At.Equal(b.At) {
+			m.benchSel = i
+			break
+		}
+	}
+	m.showBenchCompareRecords(a, b)
+}
+
+// latestBench returns the newest recorded run for a target name or model ID.
+func (m *Model) latestBench(name string) (measure.Record, bool) {
+	var out measure.Record
+	found := false
+	for _, r := range m.benchAll {
+		if r.Kind != measure.KindBench {
+			continue
+		}
+		if measure.BenchTargetName(r) == name || r.ModelID == name {
+			out, found = r, true
+		}
+	}
+	return out, found
 }
 
 // showBenchConfigDiff opens the M1.4 diff for the selected run's target when
@@ -290,5 +367,17 @@ func benchDelta(base, next float64) string {
 	if base <= 0 {
 		return ""
 	}
-	return fmt.Sprintf("(%+.1f%%)", (next-base)/base*100)
+	return fmt.Sprintf("(%+.1f%%)", bench.Delta(base, next))
+}
+
+func benchStat(median, spread float64) string {
+	return fmt.Sprintf("%.1f ±%.1f%%", median, spread*100)
+}
+
+func sampleList(samples []measure.BenchRun) string {
+	parts := make([]string, len(samples))
+	for i, run := range samples {
+		parts[i] = fmt.Sprintf("%.1f", run.GenerationTPS)
+	}
+	return strings.Join(parts, "  ")
 }
