@@ -48,9 +48,32 @@ func TestFitNoteUsesBudget(t *testing.T) {
 }
 
 func TestObservationLineUnknownBaseline(t *testing.T) {
-	got := observationLine(1<<30, measure.Summary{Count: 2})
+	got := observationLine(1<<30, &measure.Calibration{Unknown: 2})
 	if got != "estimate 1.0 GiB · observed unknown (n=2)" {
 		t.Fatalf("observation line = %q", got)
+	}
+}
+
+func TestObservationLineCalibrated(t *testing.T) {
+	cal := &measure.Calibration{
+		Samples: 5, Ratio: 1.05, MedianRatio: 1.05, Spread: 0.08,
+		ObservedBytes: 8<<30 + 400<<20, EstimateBytes: 8 << 30,
+	}
+	got := observationLine(8<<30, cal)
+	for _, want := range []string{
+		"estimate 8.0 GiB", "corrected 8.4 GiB", "observed 8.4 GiB",
+		"(n=5, ±8%)",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("calibrated line missing %q: %q", want, got)
+		}
+	}
+	cal.Clamped = true
+	if got := observationLine(8<<30, cal); !strings.Contains(got, "clamped") {
+		t.Fatalf("calibrated line missing clamp note: %q", got)
+	}
+	if got := observationLine(8<<30, &measure.Calibration{Expired: 3}); !strings.Contains(got, "3 expired") {
+		t.Fatalf("expired line = %q", got)
 	}
 }
 
@@ -66,12 +89,12 @@ func TestReportPrintShowsBreakdownAndBudget(t *testing.T) {
 			ID: "m", Path: "/tmp/m.gguf", Exists: true, Size: 8 << 30,
 			Ctx: 4096, HasEst: true, Est: est,
 			Headroom: budget.Headroom(est), Limiting: est.LimitingTerm(),
-			Observed: &measure.Summary{ObservedBytes: 3 << 30, BaselineKnown: true, Count: 1},
+			Calibration: &measure.Calibration{Samples: 1, ObservedBytes: 3 << 30, EstimateBytes: 5632 * mib},
 			Presets: []PresetFit{{
 				ID: "p", Ctx: 65536, Known: true,
 				Estimate: gguf.Estimate{GPUWeights: 4096 * mib, KVBytes: 6144 * mib, Overhead: 512 * mib, Total: 10752 * mib},
 				Fits:     false, Note: "estimate is approximate",
-				Observed: &measure.Summary{ObservedBytes: 9 << 30, BaselineKnown: true, Count: 2},
+				Calibration: &measure.Calibration{Samples: 2, ObservedBytes: 9 << 30, EstimateBytes: 10752 * mib},
 			}},
 		}},
 	}

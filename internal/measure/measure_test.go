@@ -71,11 +71,12 @@ func TestStoreMissingFile(t *testing.T) {
 	}
 }
 
-func TestSummaryMatchesShapeAndCounts(t *testing.T) {
+func TestCalibrationMatchesShapeAndCounts(t *testing.T) {
 	s := testStore(t)
 	base := Record{
 		Version: Version, ModelID: "m", Ctx: 4096,
 		CacheTypeK: "q4_0", CacheTypeV: "q4_0", GPULayers: 999,
+		BaselineKnown: true, EstimateBytes: 4 << 30,
 	}
 	first := base
 	first.At = time.Now().Add(-time.Hour)
@@ -92,28 +93,30 @@ func TestSummaryMatchesShapeAndCounts(t *testing.T) {
 		}
 	}
 
-	sum, ok := s.Summary(base.Shape())
+	cal, ok := s.Calibration(base.Shape(), Identity{})
 	if !ok {
-		t.Fatal("no summary for matching shape")
+		t.Fatal("no calibration for matching shape")
 	}
-	if sum.Count != 2 {
-		t.Fatalf("count = %d, want 2", sum.Count)
+	if cal.Samples != 2 {
+		t.Fatalf("samples = %d, want 2", cal.Samples)
 	}
-	if sum.ObservedBytes != 2<<30 {
-		t.Fatalf("latest observed = %d, want %d", sum.ObservedBytes, 2<<30)
+	if cal.ObservedBytes != 3<<29 {
+		t.Fatalf("median observed = %d, want %d", cal.ObservedBytes, uint64(3<<29))
 	}
-	if _, ok := s.Summary(Shape{ModelID: "nope"}); ok {
-		t.Fatal("unexpected summary for unknown model")
+	if _, ok := s.Calibration(Shape{ModelID: "nope"}, Identity{}); ok {
+		t.Fatal("unexpected calibration for unknown model")
 	}
 }
 
-func TestStoreBenchKindAndSummaryIgnoresBench(t *testing.T) {
+func TestStoreBenchKindAndCalibrationIgnoresBench(t *testing.T) {
 	s := testStore(t)
 	shape := Record{
 		Version: Version, ModelID: "m", Ctx: 4096,
 		CacheTypeK: "q4_0", CacheTypeV: "q4_0", GPULayers: 999,
 	}
 	observation := shape
+	observation.BaselineKnown = true
+	observation.EstimateBytes = 1 << 30
 	observation.ObservedBytes = 1 << 30
 	if err := s.Append(observation); err != nil {
 		t.Fatal(err)
@@ -135,6 +138,8 @@ func TestStoreBenchKindAndSummaryIgnoresBench(t *testing.T) {
 	}
 	plain := shape
 	plain.At = time.Now()
+	plain.BaselineKnown = true
+	plain.EstimateBytes = 2 << 30
 	plain.ObservedBytes = 2 << 30
 	if err := s.Append(plain); err != nil {
 		t.Fatal(err)
@@ -154,12 +159,12 @@ func TestStoreBenchKindAndSummaryIgnoresBench(t *testing.T) {
 		t.Fatalf("bench payload = %+v", all[1].Bench)
 	}
 
-	sum, ok := s.Summary(shape.Shape())
+	cal, ok := s.Calibration(shape.Shape(), Identity{})
 	if !ok {
-		t.Fatal("no summary")
+		t.Fatal("no calibration")
 	}
-	if sum.Count != 2 || sum.ObservedBytes != 2<<30 {
-		t.Fatalf("summary = %+v (bench record must not be counted)", sum)
+	if cal.Samples != 2 || cal.ObservedBytes != 3<<29 {
+		t.Fatalf("calibration = %+v (bench record must not be counted)", cal)
 	}
 }
 

@@ -71,17 +71,45 @@ func TestFitLineShowsObservation(t *testing.T) {
 	m.fit = fitInfo{
 		Ready:    true,
 		Est:      gguf.Estimate{Total: 8 << 30},
-		HasObs:   true,
-		Observed: measure.Summary{ObservedBytes: 3 << 30, BaselineKnown: true, Count: 1},
+		HasCalib: true,
+		Calib:    measure.Calibration{Samples: 1, ObservedBytes: 3 << 30, EstimateBytes: 8 << 30},
 	}
 	out := strings.Join(m.fitLine(80), "\n")
 	if !strings.Contains(out, "estimate 8.0 GiB · observed 3.0 GiB (n=1)") {
 		t.Fatalf("fit line missing observation:\n%s", out)
 	}
-	m.fit.Observed = measure.Summary{BaselineKnown: false, Count: 2}
+	m.fit.Calib = measure.Calibration{Unknown: 2}
 	out = strings.Join(m.fitLine(80), "\n")
 	if !strings.Contains(out, "observed unknown (n=2)") {
 		t.Fatalf("fit line missing unknown observation:\n%s", out)
+	}
+}
+
+func TestFitLineShowsCalibration(t *testing.T) {
+	m := testModel(t)
+	m.fit = fitInfo{
+		Ready:    true,
+		Est:      gguf.Estimate{Total: 8 << 30},
+		HasCalib: true,
+		Calib: measure.Calibration{
+			Samples: 5, Ratio: 1.05, MedianRatio: 1.05, Spread: 0.08,
+			ObservedBytes: 8<<30 + 400<<20, EstimateBytes: 8 << 30,
+		},
+	}
+	out := strings.Join(m.fitLine(80), "\n")
+	for _, want := range []string{
+		"estimate 8.0 GiB",
+		"corrected 8.4 GiB",
+		"observed 8.4 GiB",
+		"(n=5, ±8%)",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("calibrated fit line missing %q:\n%s", want, out)
+		}
+	}
+	m.fit.Calib.Clamped = true
+	if out := strings.Join(m.fitLine(80), "\n"); !strings.Contains(out, "clamped") {
+		t.Fatalf("calibrated fit line missing clamp note:\n%s", out)
 	}
 }
 

@@ -219,6 +219,7 @@ options:
   --n-cpu-moe N    override n_cpu_moe
   --save-preset NAME  write the recommendation as presets.NAME
   --force          replace an existing preset
+  --calibrated     apply observed/estimate correction and label it
   --json           print the stable machine-readable result`
 
 type fitOptions struct {
@@ -229,6 +230,7 @@ type fitOptions struct {
 	nCPUMoE    *int
 	savePreset string
 	force      bool
+	calibrated bool
 	asJSON     bool
 }
 
@@ -267,6 +269,8 @@ func parseFitArgs(args []string) (fitOptions, error) {
 			o.asJSON = true
 		case a == "--force":
 			o.force = true
+		case a == "--calibrated":
+			o.calibrated = true
 		case a == "-h" || a == "--help":
 			return o, flag.ErrHelp
 		case a == "--vram" || a == "--cache-type" || a == "--gpu-layers" ||
@@ -373,6 +377,10 @@ func cmdFit(cfgPath string, args []string) int {
 		return 1
 	}
 	res.Target, res.Kind = opts.target, kind
+	if opts.calibrated {
+		res.Calibrated = true
+		applyFitCalibration(&res, cfg, uint64(info.Size()), info.ModTime())
+	}
 	if opts.savePreset != "" {
 		rec := res.Recommendation
 		err := cfg.SavePreset(cfgPath, opts.savePreset, r.ModelID, config.PresetFit{
@@ -397,6 +405,49 @@ func cmdFit(cfgPath string, args []string) int {
 	}
 	printFit(res)
 	return 0
+}
+
+// applyFitCalibration attaches the measured correction to each recommendation.
+// The raw estimate and solver verdict stay untouched; the calibrated view is
+// additional information that the caller explicitly requested.
+func applyFitCalibration(res *fit.Result, cfg *config.Config, size uint64, modTime time.Time) {
+	store := measure.NewStore()
+	id := measure.Identity{
+		ModelSize:          size,
+		ModelModTime:       modTime,
+		LlamaServerVersion: measure.ServerVersion(config.ExpandPath(cfg.App.LlamaServer)),
+	}
+	if snap, err := sysinfo.NewCollector().Sample(); err == nil {
+		if gpu, ok := snap.Primary(); ok {
+			id.GPUPCIID = gpu.PCIID
+			id.GPUDriver = gpu.Driver
+		}
+	}
+	apply := func(rec *fit.Recommendation) {
+		shape := measure.Shape{
+			ModelID:    res.ModelID,
+			Ctx:        rec.Ctx,
+			CacheTypeK: rec.CacheTypeK,
+			CacheTypeV: rec.CacheTypeV,
+			GPULayers:  rec.GPULayers,
+			NCPUMoE:    rec.NCPUMoE,
+		}
+		cal, ok := store.Calibration(shape, id)
+		if !ok {
+			return
+		}
+		rec.Calibration = &cal
+		if !cal.OK() {
+			return
+		}
+		rec.Calibrated = true
+		rec.Corrected = cal.Corrected(rec.Estimate.Total)
+		rec.CorrectedHeadroom = int64(res.Budget.Available) - int64(rec.Corrected)
+	}
+	apply(&res.Recommendation)
+	for i := range res.Alternatives {
+		apply(&res.Alternatives[i])
+	}
 }
 
 // fitBudget derives the budget for a fit. An explicit --vram is the total card
@@ -439,7 +490,11 @@ func fitBudget(cfg *config.Config, vram string) (gguf.Budget, error) {
 }
 
 func printFit(res fit.Result) {
-	fmt.Printf("%s (%s) · model %s\n", res.Target, res.Kind, res.ModelID)
+	head := fmt.Sprintf("%s (%s) · model %s", res.Target, res.Kind, res.ModelID)
+	if res.Calibrated {
+		head += " · calibrated"
+	}
+	fmt.Println(head)
 	fmt.Printf("path: %s\n", res.ModelPath)
 	if res.Budget.Known {
 		fmt.Printf("budget: %s available of %s · reserve %s\n",
@@ -456,6 +511,10 @@ func printFit(res fit.Result) {
 		res.Requested.Ctx, res.Requested.GPULayers, res.Requested.NCPUMoE,
 		res.Requested.CacheTypeK, res.Requested.CacheTypeV)
 	fmt.Println()
+	if res.Calibrated && !fitHasCalibration(res) {
+		fmt.Println("calibration: no observations for this model and environment")
+		fmt.Println()
+	}
 	fmt.Println("recommended:")
 	printFitRecommendation(res.Recommendation)
 	if len(res.Alternatives) > 0 {
@@ -487,9 +546,52 @@ func printFitRecommendation(rec fit.Recommendation) {
 		approx = " · approximate"
 	}
 	fmt.Printf("     headroom %s · limit %s · %s%s\n", signedSize(rec.Headroom), rec.Limiting, fitVerdict(rec.Fits), approx)
+	if rec.Calibration != nil {
+		fmt.Printf("     %s\n", fitCalibrationText(rec.Estimate.Total, rec.Calibration))
+		if rec.Calibrated {
+			fmt.Printf("     calibrated headroom %s\n", signedSize(rec.CorrectedHeadroom))
+		}
+	}
 	for _, change := range rec.Changes {
 		fmt.Printf("     %s\n", change)
 	}
+}
+
+// fitHasCalibration reports whether any recommendation carries observations.
+func fitHasCalibration(res fit.Result) bool {
+	if res.Recommendation.Calibration != nil {
+		return true
+	}
+	for _, rec := range res.Alternatives {
+		if rec.Calibration != nil {
+			return true
+		}
+	}
+	return false
+}
+
+// fitCalibrationText mirrors the TUI wording and always keeps the raw estimate.
+func fitCalibrationText(estimate uint64, c *measure.Calibration) string {
+	switch {
+	case c == nil:
+		return "calibration: no observations"
+	case c.Samples == 0 && c.Unknown > 0:
+		return fmt.Sprintf("calibration: observed unknown (n=%d)", c.Unknown)
+	case c.Samples == 0 && c.Expired > 0:
+		return fmt.Sprintf("calibration: no current observations (%d expired)", c.Expired)
+	case c.Samples == 0:
+		return "calibration: no observations"
+	case !c.OK():
+		return fmt.Sprintf("calibration: estimate %s · observed %s (n=%d) · not calibrated (need %d samples)",
+			humanSize(estimate), humanSize(c.ObservedBytes), c.Samples, measure.MinCalibrationSamples)
+	}
+	text := fmt.Sprintf("calibrated: estimate %s · corrected %s · observed %s (n=%d, ±%.0f%%)",
+		humanSize(estimate), humanSize(c.Corrected(estimate)),
+		humanSize(c.ObservedBytes), c.Samples, c.Spread*100)
+	if c.Clamped {
+		text += " · clamped"
+	}
+	return text
 }
 
 func fitVerdict(fits bool) string {

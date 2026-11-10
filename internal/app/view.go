@@ -357,8 +357,8 @@ func (m *Model) fitLine(w int) []string {
 	est := fi.Est
 	budget := m.budget()
 	lines := []string{st.Muted.Render("fit " + fitBreakdown(est))}
-	if fi.HasObs {
-		lines = append(lines, st.Muted.Render(observationText(est.Total, fi.Observed)))
+	if fi.HasCalib {
+		lines = append(lines, st.Muted.Render(calibrationText(est.Total, fi.Calib)))
 	}
 	if !budget.Known {
 		return append(lines, st.Muted.Render("budget unknown (no GPU VRAM detected)"))
@@ -401,13 +401,29 @@ func fitBreakdown(e gguf.Estimate) string {
 	return s
 }
 
-// observationText compares the live estimate with the newest measurement.
-func observationText(estimate uint64, s measure.Summary) string {
-	if !s.BaselineKnown {
-		return fmt.Sprintf("observed unknown (n=%d)", s.Count)
+// calibrationText compares the live estimate with the observations for the
+// current model and environment. It always shows the raw estimate and the
+// sample count; the corrected value appears only once there are enough samples.
+func calibrationText(estimate uint64, c measure.Calibration) string {
+	switch {
+	case c.Samples == 0 && c.Unknown > 0:
+		return fmt.Sprintf("observed unknown (n=%d)", c.Unknown)
+	case c.Samples == 0 && c.Expired > 0:
+		return fmt.Sprintf("estimate %s · no current observations (%d expired)",
+			ui.HumanBytes(estimate), c.Expired)
+	case c.Samples == 0:
+		return fmt.Sprintf("estimate %s · no observations", ui.HumanBytes(estimate))
+	case !c.OK():
+		return fmt.Sprintf("estimate %s · observed %s (n=%d)",
+			ui.HumanBytes(estimate), ui.HumanBytes(c.ObservedBytes), c.Samples)
 	}
-	return fmt.Sprintf("estimate %s · observed %s (n=%d)",
-		ui.HumanBytes(estimate), ui.HumanBytes(s.ObservedBytes), s.Count)
+	text := fmt.Sprintf("estimate %s · corrected %s · observed %s (n=%d, ±%.0f%%)",
+		ui.HumanBytes(estimate), ui.HumanBytes(c.Corrected(estimate)),
+		ui.HumanBytes(c.ObservedBytes), c.Samples, c.Spread*100)
+	if c.Clamped {
+		text += " · clamped"
+	}
+	return text
 }
 
 // fitBar draws the estimate as segments against the GPU's total VRAM.

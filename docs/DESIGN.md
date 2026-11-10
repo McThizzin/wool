@@ -682,7 +682,22 @@ truth. Restarts re-sample the baseline after the old process stops.
 same capture as a background command so the 15s window never blocks input.
 Records are matched by model, context, cache types, GPU layers and
 `n_cpu_moe`; observations from a different launch shape are not compared.
-A corrupt line is skipped. There is no correction factor yet; that is M3.4.
+A corrupt line is skipped.
+
+`Store.Calibration` groups observations by that launch shape and the current
+environment: model size and modtime, GPU PCI ID, GPU driver and
+`llama-server --version`. A sample expires when a field known on both sides
+differs; unknown fields never expire a sample because the difference cannot be
+proven. Records with an unknown baseline or zero observed/estimate bytes are
+counted separately and never contribute a ratio.
+
+With at least three usable samples the correction is the median
+`observed/estimate` ratio, clamped to `[0.5, 2.0]`. The spread is
+`(max-min)/median`. The raw estimate and sample count are always shown; the
+corrected value is additive and is only applied when the user asks for it with
+`wool fit --calibrated`. Expired-only state is reported as expired instead of
+silently reusing stale samples. Calibration is a hint: other GPU users,
+mmap faulting and sampling lag all confound the observed delta.
 
 ## Benchmarks
 
@@ -793,7 +808,8 @@ runs and warnings.
 - per-model and per-preset fit estimates, including the GPU/CPU weights, KV and
   overhead breakdown, budget, headroom, limiting term and approximation
   reasons;
-- the newest matching observation and its sample count, when one exists.
+- the calibration for the matching launch shape and environment: sample count,
+  median ratio, spread and expiry state, when one exists.
 
 Warnings do not make the command fail; failures do. `wool doctor --json`
 exposes the same report. The TUI shows the plain-text report in a scrollable

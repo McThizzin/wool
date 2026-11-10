@@ -89,6 +89,10 @@ type Model struct {
 	fitCache map[string]fitInfo
 	meta     map[string]metaEntry
 
+	versionBin string
+	versionVal string
+	versionSet bool
+
 	budgetKey string
 	budgetVal gguf.Budget
 
@@ -136,15 +140,16 @@ type fitInfo struct {
 	GPUName   string
 	Ctx       int
 	Layers    int
-	Observed  measure.Summary
-	HasObs    bool
+	Calib     measure.Calibration
+	HasCalib  bool
 }
 
 type metaEntry struct {
-	Meta  gguf.Meta
-	Size  uint64
-	Err   string
-	Ready bool
+	Meta    gguf.Meta
+	Size    uint64
+	ModTime time.Time
+	Err     string
+	Ready   bool
 }
 
 type tickMsg struct {
@@ -624,11 +629,33 @@ func (m *Model) computeFit(r config.Resolved) fitInfo {
 			GPULayers:  r.GPULayers,
 			NCPUMoE:    r.NCPUMoE,
 		}
-		if sum, ok := m.meas.Summary(shape); ok {
-			fi.Observed, fi.HasObs = sum, true
+		id := measure.Identity{
+			ModelSize:          meta.Size,
+			ModelModTime:       meta.ModTime,
+			LlamaServerVersion: m.llamaVersion(),
+		}
+		if gpu, ok := m.snap.Primary(); ok {
+			id.GPUPCIID = gpu.PCIID
+			id.GPUDriver = gpu.Driver
+		}
+		if cal, ok := m.meas.Calibration(shape, id); ok {
+			fi.Calib, fi.HasCalib = cal, true
 		}
 	}
 	return fi
+}
+
+// llamaVersion caches the configured llama-server version for calibration
+// identity. The version is display metadata, so a stale cache is acceptable.
+func (m *Model) llamaVersion() string {
+	bin := config.ExpandPath(m.cfg.App.LlamaServer)
+	if m.versionSet && m.versionBin == bin {
+		return m.versionVal
+	}
+	m.versionBin = bin
+	m.versionVal = measure.ServerVersion(bin)
+	m.versionSet = true
+	return m.versionVal
 }
 
 // budget is the VRAM available to a new server. The running standalone
@@ -665,11 +692,16 @@ func (m *Model) metaFor(path string) (metaEntry, error) {
 		return e, errors.New(e.Err)
 	}
 	e := metaEntry{}
-	info, err := statFile(path)
+	info, err := os.Stat(path)
 	if err != nil {
 		e.Err = err.Error()
 		m.meta[path] = e
 		return e, err
+	}
+	if info.IsDir() {
+		e.Err = fmt.Sprintf("%s is a directory", path)
+		m.meta[path] = e
+		return e, errors.New(e.Err)
 	}
 	meta, err := gguf.ReadMeta(path)
 	if err != nil {
@@ -677,7 +709,7 @@ func (m *Model) metaFor(path string) (metaEntry, error) {
 		m.meta[path] = e
 		return e, err
 	}
-	e = metaEntry{Meta: meta, Size: info, Err: "", Ready: true}
+	e = metaEntry{Meta: meta, Size: uint64(info.Size()), ModTime: info.ModTime(), Ready: true}
 	m.meta[path] = e
 	return e, nil
 }

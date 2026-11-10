@@ -84,7 +84,7 @@ Known gaps that shape the sequence:
 
 | Gap | Consequence |
 | --- | --- |
-| Observations are shown but not yet used to correct the estimate | Users still see a raw estimate; calibration is M3.4 |
+| Observations are shown and can correct the estimate after three matching samples | Calibration is a display hint and must be opted into with `wool fit --calibrated` |
 | Unknown tensor layouts and SWA patterns fall back to file size | Some architectures and quant types are marked approximate |
 | Benchmarks are recorded with history and a scripted, interleaved A/B comparison, but the noise warning is a coarse spread guard | Small deltas can still be noise; use more rounds before trusting them |
 | No crash detection, restart policy or alerts | A server can die silently |
@@ -427,8 +427,9 @@ Open questions to resolve before or during the relevant milestone:
 
 1. What is the minimum supported `llama-server` version? Doctor should report
    it and the roadmap should name it.
-2. Should calibration be on by default for display, or opt-in? Current plan:
-   display-only when enough samples exist, opt-in for fit.
+2. Should calibration be on by default for display, or opt-in? Resolved:
+   display-only when enough samples exist; `wool fit --calibrated` opts into
+   using it.
 3. Is a detached supervisor acceptable, or should restart always be delegated
    to systemd? Current plan: in-session restart in M4, detached supervisor only
    if users need it.
@@ -463,7 +464,7 @@ boundary.
 | M3.1 | [`wool bench`](features/m3-01-wool-bench.md) | M3 | P1 | L | M1.3 | shipped |
 | M3.2 | [Benchmark history and trends](features/m3-02-benchmark-history-and-trends.md) | M3 | P1 | M | M3.1 | shipped |
 | M3.3 | [A/B comparison](features/m3-03-a-b-comparison.md) | M3 | P2 | M | M3.1, M3.2 | shipped |
-| M3.4 | [Calibration correction](features/m3-04-calibration-correction.md) | M3 | P1 | M | M1.3, M3.1 | planned |
+| M3.4 | [Calibration correction](features/m3-04-calibration-correction.md) | M3 | P1 | M | M1.3, M3.1 | shipped |
 | M3.5 | [Smoke test on launch](features/m3-05-smoke-test-on-launch.md) | M3 | P2 | S | — | planned |
 | M4.1 | [Live inference panel](features/m4-01-live-inference-panel.md) | M4 | P1 | M | — | planned |
 | M4.2 | [Structured request log](features/m4-02-structured-request-log.md) | M4 | P2 | M | M4.1 | planned |

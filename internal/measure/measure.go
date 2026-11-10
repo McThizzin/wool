@@ -157,16 +157,6 @@ func (r Record) Shape() Shape {
 	}
 }
 
-// Summary is the most recent observation for one shape.
-type Summary struct {
-	At            time.Time `json:"at"`
-	EstimateBytes uint64    `json:"estimate_bytes"`
-	ObservedBytes uint64    `json:"observed_bytes"`
-	BaselineKnown bool      `json:"baseline_known"`
-	Count         int       `json:"count"`
-	SampleCount   int       `json:"sample_count"`
-}
-
 // Store is an append-only JSONL file.
 type Store struct {
 	Path string
@@ -336,43 +326,6 @@ func (s *Store) All() ([]Record, error) {
 		return out, err
 	}
 	return out, nil
-}
-
-// Summary returns the newest record matching shape and how many records match.
-func (s *Store) Summary(shape Shape) (Summary, bool) {
-	records, err := s.All()
-	if err != nil {
-		return Summary{}, false
-	}
-	var latest Record
-	found := false
-	count := 0
-	for _, r := range records {
-		// Benchmarks share the file but are not launch observations. Their
-		// observed bytes have different semantics, so they must not skew the
-		// observed-vs-estimate summary.
-		if r.Kind != KindObservation {
-			continue
-		}
-		if r.Shape() != shape {
-			continue
-		}
-		count++
-		if !found || r.At.After(latest.At) {
-			latest, found = r, true
-		}
-	}
-	if !found {
-		return Summary{}, false
-	}
-	return Summary{
-		At:            latest.At,
-		EstimateBytes: latest.EstimateBytes,
-		ObservedBytes: latest.ObservedBytes,
-		BaselineKnown: latest.BaselineKnown,
-		Count:         count,
-		SampleCount:   latest.SampleCount,
-	}, true
 }
 
 // RunInfo is everything needed to turn a launch into a record.

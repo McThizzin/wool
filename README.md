@@ -18,7 +18,7 @@
 - **VRAM-fit estimates.** Reads GGUF metadata and the tensor table, models llama.cpp's tensor placement, Gemma-style sliding-window/shared KV, hybrid attention (Qwen3.5/Qwen3-Next), per-layer KV heads, and quantized KV cache types. The UI shows `weights + KV + overhead`, the budget after reserve and other GPU usage, headroom and the limiting term.
 - **Auto-fit recommendations.** `wool fit TARGET` binary-searches the largest context that fits the budget, capped at the model's native context. When the requested settings cannot hold a useful context it ranks fallbacks: lower KV cache precision first, then CPU offload (using `n_cpu_moe` for MoE models). Every recommendation is within budget and includes weights, KV, overhead, headroom, the limiting term and the changes it makes. `--save-preset NAME` writes the result as a new preset.
 - **Benchmarks and history.** `wool bench TARGET` starts an ephemeral server, warms up, and records prompt and generation throughput over repeated runs with median/min/max and peak VRAM. It can attach to a matching managed server or any `--url`, and optionally drive `llama-bench`. `wool bench history` and the Bench tab show past runs, trends and a two-run comparison. `wool bench compare A B` runs two targets interleaved and reports the median, spread and percentage delta.
-- **Observed vs. estimate.** After a launch, `wool` records used VRAM at 5s and 15s and shows it next to the estimate with a sample count.
+- **Observed vs. estimate.** After a launch, `wool` records used VRAM at 5s and 15s and shows it next to the estimate with a sample count. With at least three matching samples, the dashboard and doctor also show a median correction, clamped to 0.5–2.0; the raw estimate is always kept. Samples expire when the model file, GPU, driver or `llama-server` version changes.
 - **Hardware telemetry.** CPU, RAM, AMD `amdgpu` VRAM, temperature, power, fan, and sparklines, with no extra daemon required.
 - **Preset and model editing.** Edit resolved launch options in the TUI; changes are written back to TOML with comments and ordering preserved. Changing `ctx`, cache type, `gpu_layers` or `n_cpu_moe` previews the new estimate without saving.
 - **Seven tabs, themes, commands.** Dashboard, Models, Presets, Router, Hardware, Logs, Bench; built-in and custom themes; slash commands and completion.
@@ -93,12 +93,17 @@ Router start accepts `--dry-run`, `--restart`, `--port N`, and `--no-wait`.
 
 `wool fit TARGET` accepts a preset name or model ID plus `--vram SIZE`,
 `--cache-type TYPE`, `--gpu-layers N`, `--n-cpu-moe N`, `--save-preset NAME`,
-`--force` and `--json`. It prints a ranked recommendation and alternatives, the
-estimate breakdown, headroom, the limiting term and any changes from the
-requested settings. `--vram 7G` means a 7 GiB card: the solver subtracts
-`router.memory_margin_mib` and ignores live usage from other processes, so
-output is deterministic. Without `--vram` it uses the live GPU budget and
-excludes a running standalone server's own allocation.
+`--force`, `--calibrated` and `--json`. It prints a ranked recommendation and
+alternatives, the estimate breakdown, headroom, the limiting term and any
+changes from the requested settings. `--vram 7G` means a 7 GiB card: the solver
+subtracts `router.memory_margin_mib` and ignores live usage from other
+processes, so output is deterministic. Without `--vram` it uses the live GPU
+budget and excludes a running standalone server's own allocation.
+
+`--calibrated` attaches the median observed/estimate correction for each
+recommendation's launch shape and labels the output as calibrated. The raw
+estimate and solver verdict stay visible; the corrected value and headroom are
+additional. Below three matching samples no correction is applied.
 
 `--save-preset NAME` writes the primary recommendation as `[presets.NAME]`
 with the model reference plus `ctx`, `gpu_layers`, `n_cpu_moe`,
@@ -244,7 +249,7 @@ Unset keys inherit; explicit zero/false values are preserved. `threads = 0` reso
 
 The dashboard and `wool doctor` decompose the estimate into weights, KV cache and overhead, then compare it with the budget for a new server: GPU total minus `router.memory_margin_mib` minus VRAM used by other processes. A running standalone server's own allocation is excluded so a restart is not charged twice. `wool doctor --json` includes the same `estimate`, `budget`, `headroom_bytes` and `limiting_term` fields. While editing, the preview updates as you type; `enter` commits and `esc` discards.
 
-Successful launches also record one observation in `$XDG_STATE_HOME/wool/measurements/runs.jsonl`: a pre-launch VRAM baseline, samples at 5s and 15s after health, and the estimate for that exact launch. The dashboard and doctor show `estimate 6.1 GiB · observed 6.4 GiB (n=3)`. The observation is a baseline-subtracted delta, not an exact model footprint, and it is recorded even when the baseline is unknown (shown as `observed unknown`). `wool bench` appends records with `kind: "bench"` to the same file; they carry the raw runs, throughput summary and peak VRAM, and are ignored by observed-vs-estimate summaries. No correction factor is applied.
+Successful launches also record one observation in `$XDG_STATE_HOME/wool/measurements/runs.jsonl`: a pre-launch VRAM baseline, samples at 5s and 15s after health, and the estimate for that exact launch. The dashboard and doctor show `estimate 6.1 GiB · observed 6.4 GiB (n=3)`; with at least three matching samples they add `corrected 6.4 GiB (n=3, ±8%)`. The observation is a baseline-subtracted delta, not an exact model footprint, and it is recorded even when the baseline is unknown (shown as `observed unknown`). The correction is the median observed/estimate ratio, clamped to 0.5–2.0, and it is display-only unless `wool fit --calibrated` is used. Samples are ignored when the model file, GPU, driver or `llama-server` version changed. `wool bench` appends records with `kind: "bench"` to the same file; they carry the raw runs, throughput summary and peak VRAM, and are ignored by calibration.
 
 ### Custom themes
 
@@ -334,7 +339,7 @@ The KV cache comes from context, attention heads, cache type and the layer sched
 
 For MoE models, `n_cpu_moe = N` keeps the routed-expert tensors (`ffn_*_exps`) of the first `N` layers on the CPU; routers and shared experts stay with their layer. If the tensor table is missing, a quantisation type or tensor name is unsupported, or expert tensors cannot be identified, `wool` falls back to the file-size fraction and marks the estimate approximate. Doctor and the editor preview explain why. A fixed overhead covers compute buffers and allocator slack. The estimate is deliberately conservative and still omits unused MTP tensors and speculative decoding buffers, so it is a fit warning rather than an exact measurement.
 
-`wool fit` inverts that estimate. It searches for the largest context on a 256-token grid that fits the budget, up to the model's native context. The requested settings are tried first; when they cannot hold at least 2048 tokens, the solver steps down through cache precision, CPU offload and finally both. The result is deterministic: the same config, model file and `--vram` value produce the same ranking. In the editor, `F` opens the picker against the live budget; `enter` applies the selection to the draft, and `ctrl+s` writes only the changed `ctx`, `gpu_layers`, `n_cpu_moe`, `cache_type_k` and `cache_type_v` values. `p` saves the selected recommendation as a new preset without touching the draft; an existing name requires `P` to replace it.
+`wool fit` inverts that estimate. It searches for the largest context on a 256-token grid that fits the budget, up to the model's native context. The requested settings are tried first; when they cannot hold at least 2048 tokens, the solver steps down through cache precision, CPU offload and finally both. The result is deterministic: the same config, model file and `--vram` value produce the same ranking. Add `--calibrated` to attach the measured correction to each recommendation; the raw estimate and fit verdict remain the primary result. In the editor, `F` opens the picker against the live budget; `enter` applies the selection to the draft, and `ctrl+s` writes only the changed `ctx`, `gpu_layers`, `n_cpu_moe`, `cache_type_k` and `cache_type_v` values. `p` saves the selected recommendation as a new preset without touching the draft; an existing name requires `P` to replace it.
 
 ## Project layout
 

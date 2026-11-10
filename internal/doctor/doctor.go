@@ -47,35 +47,35 @@ type Check struct {
 
 // PresetFit is a memory estimate for one preset.
 type PresetFit struct {
-	ID       string           `json:"id"`
-	Ctx      int              `json:"ctx"`
-	Estimate gguf.Estimate    `json:"estimate"`
-	Known    bool             `json:"known"`
-	Fits     bool             `json:"fits"`
-	Headroom int64            `json:"headroom_bytes"`
-	Limiting string           `json:"limiting_term,omitempty"`
-	Note     string           `json:"note,omitempty"`
-	Observed *measure.Summary `json:"observation,omitempty"`
+	ID          string               `json:"id"`
+	Ctx         int                  `json:"ctx"`
+	Estimate    gguf.Estimate        `json:"estimate"`
+	Known       bool                 `json:"known"`
+	Fits        bool                 `json:"fits"`
+	Headroom    int64                `json:"headroom_bytes"`
+	Limiting    string               `json:"limiting_term,omitempty"`
+	Note        string               `json:"note,omitempty"`
+	Calibration *measure.Calibration `json:"calibration,omitempty"`
 }
 
 // ModelReport describes one configured model.
 type ModelReport struct {
-	ID       string           `json:"id"`
-	Path     string           `json:"path"`
-	Alias    string           `json:"alias,omitempty"`
-	Ctx      int              `json:"ctx"`
-	Exists   bool             `json:"exists"`
-	Size     uint64           `json:"size_bytes"`
-	Meta     gguf.Meta        `json:"meta"`
-	HasMeta  bool             `json:"has_meta"`
-	MetaErr  string           `json:"meta_error,omitempty"`
-	Est      gguf.Estimate    `json:"estimate"`
-	HasEst   bool             `json:"has_estimate"`
-	Headroom int64            `json:"headroom_bytes"`
-	Limiting string           `json:"limiting_term,omitempty"`
-	FitNote  string           `json:"fit_note,omitempty"`
-	Observed *measure.Summary `json:"observation,omitempty"`
-	Presets  []PresetFit      `json:"presets,omitempty"`
+	ID          string               `json:"id"`
+	Path        string               `json:"path"`
+	Alias       string               `json:"alias,omitempty"`
+	Ctx         int                  `json:"ctx"`
+	Exists      bool                 `json:"exists"`
+	Size        uint64               `json:"size_bytes"`
+	Meta        gguf.Meta            `json:"meta"`
+	HasMeta     bool                 `json:"has_meta"`
+	MetaErr     string               `json:"meta_error,omitempty"`
+	Est         gguf.Estimate        `json:"estimate"`
+	HasEst      bool                 `json:"has_estimate"`
+	Headroom    int64                `json:"headroom_bytes"`
+	Limiting    string               `json:"limiting_term,omitempty"`
+	FitNote     string               `json:"fit_note,omitempty"`
+	Calibration *measure.Calibration `json:"calibration,omitempty"`
+	Presets     []PresetFit          `json:"presets,omitempty"`
 }
 
 // Report is the full doctor result.
@@ -122,6 +122,7 @@ func Run(cfg *config.Config, cfgPath string) Report {
 	add(LevelOK, "config", "%d models, %d presets, theme %s", len(cfg.Models), len(cfg.Presets), cfg.App.Theme)
 
 	bin := config.ExpandPath(cfg.App.LlamaServer)
+	serverVersion := ""
 	path, err := exec.LookPath(bin)
 	if err != nil {
 		add(LevelFail, "llama-server", "%s not found in PATH", bin)
@@ -130,6 +131,7 @@ func Run(cfg *config.Config, cfgPath string) Report {
 		out, verr := exec.CommandContext(ctx, path, "--version").CombinedOutput()
 		cancel()
 		version := firstLine(string(out))
+		serverVersion = version
 		switch {
 		case verr != nil && version == "":
 			add(LevelWarn, "llama-server", "%s found but --version failed: %v", path, verr)
@@ -190,6 +192,7 @@ func Run(cfg *config.Config, cfgPath string) Report {
 		if err := ValidateIDAlias(id); err != nil {
 			add(LevelFail, "model id", "%v", err)
 		}
+		var modTime time.Time
 		info, statErr := os.Stat(r.Path)
 		if statErr != nil {
 			r.Exists = false
@@ -200,6 +203,7 @@ func Run(cfg *config.Config, cfgPath string) Report {
 		} else {
 			r.Exists = true
 			r.Size = uint64(info.Size())
+			modTime = info.ModTime()
 			meta, metaErr := gguf.ReadMeta(r.Path)
 			if metaErr != nil {
 				r.MetaErr = metaErr.Error()
@@ -208,6 +212,13 @@ func Run(cfg *config.Config, cfgPath string) Report {
 				r.Meta = meta
 				r.HasMeta = true
 			}
+		}
+		identity := measure.Identity{
+			ModelSize:          r.Size,
+			ModelModTime:       modTime,
+			GPUPCIID:           primary.PCIID,
+			GPUDriver:          primary.Driver,
+			LlamaServerVersion: serverVersion,
 		}
 
 		resolved, err := cfg.Resolve(id, nil)
@@ -232,8 +243,8 @@ func Run(cfg *config.Config, cfgPath string) Report {
 					GPULayers:  resolved.GPULayers,
 					NCPUMoE:    resolved.NCPUMoE,
 				}
-				if sum, ok := store.Summary(shape); ok {
-					r.Observed = &sum
+				if cal, ok := store.Calibration(shape, identity); ok {
+					r.Calibration = &cal
 				}
 			}
 		}
@@ -256,8 +267,8 @@ func Run(cfg *config.Config, cfgPath string) Report {
 				GPULayers:  pr.GPULayers,
 				NCPUMoE:    pr.NCPUMoE,
 			}
-			if sum, ok := store.Summary(shape); ok {
-				pf.Observed = &sum
+			if cal, ok := store.Calibration(shape, identity); ok {
+				pf.Calibration = &cal
 			}
 			if r.HasMeta {
 				pf.Known = true
@@ -403,18 +414,35 @@ func estimateLine(e gguf.Estimate, headroom int64, limiting string, budgetKnown 
 	return line
 }
 
-// observationLine compares the live estimate with the newest measurement.
-func observationLine(estimate uint64, s measure.Summary) string {
-	return fmt.Sprintf("estimate %s · %s", humanBytes(estimate), observedShort(s))
+// observationLine compares the live estimate with the observations for the
+// current model and environment.
+func observationLine(estimate uint64, c *measure.Calibration) string {
+	return fmt.Sprintf("estimate %s · %s", humanBytes(estimate), observedShort(estimate, c))
 }
 
 // observedShort is the observation without repeating the estimate, for lines
 // that already show one.
-func observedShort(s measure.Summary) string {
-	if !s.BaselineKnown {
-		return fmt.Sprintf("observed unknown (n=%d)", s.Count)
+func observedShort(estimate uint64, c *measure.Calibration) string {
+	if c == nil {
+		return "no observations"
 	}
-	return fmt.Sprintf("observed %s (n=%d)", humanBytes(s.ObservedBytes), s.Count)
+	switch {
+	case c.Samples == 0 && c.Unknown > 0:
+		return fmt.Sprintf("observed unknown (n=%d)", c.Unknown)
+	case c.Samples == 0 && c.Expired > 0:
+		return fmt.Sprintf("no current observations (%d expired)", c.Expired)
+	case c.Samples == 0:
+		return "no observations"
+	case !c.OK():
+		return fmt.Sprintf("observed %s (n=%d)", humanBytes(c.ObservedBytes), c.Samples)
+	}
+	text := fmt.Sprintf("corrected %s · observed %s (n=%d, ±%.0f%%)",
+		humanBytes(c.Corrected(estimate)), humanBytes(c.ObservedBytes),
+		c.Samples, c.Spread*100)
+	if c.Clamped {
+		text += " · clamped"
+	}
+	return text
 }
 
 // Print writes a plain-text report. Kept here so the CLI and TUI show the
@@ -444,11 +472,11 @@ func (r Report) Print() string {
 				state = humanBytes(m.Size)
 			}
 			fmt.Fprintf(&b, "  %-22s %-10s ctx %-6d", m.ID, state, m.Ctx)
-			if m.HasEst && m.Observed == nil {
+			if m.HasEst && m.Calibration == nil {
 				fmt.Fprintf(&b, " est %s", humanBytes(m.Est.Total))
 			}
-			if m.Observed != nil {
-				fmt.Fprintf(&b, "  %s", observationLine(m.Est.Total, *m.Observed))
+			if m.HasEst && m.Calibration != nil {
+				fmt.Fprintf(&b, "  %s", observationLine(m.Est.Total, m.Calibration))
 			}
 			if m.MetaErr != "" {
 				b.WriteString(" (metadata unreadable)")
@@ -469,8 +497,8 @@ func (r Report) Print() string {
 				if p.Known {
 					b.WriteString(" · " + estimateLine(p.Estimate, p.Headroom, p.Limiting, r.Budget.Known))
 				}
-				if p.Observed != nil {
-					b.WriteString(" · " + observedShort(*p.Observed))
+				if p.Known && p.Calibration != nil {
+					b.WriteString(" · " + observedShort(p.Estimate.Total, p.Calibration))
 				}
 				if p.Note != "" {
 					b.WriteString(" (" + p.Note + ")")

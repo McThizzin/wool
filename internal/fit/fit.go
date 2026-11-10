@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"wool/internal/gguf"
+	"wool/internal/measure"
 )
 
 const (
@@ -72,6 +73,13 @@ type Recommendation struct {
 	Fallback   string        `json:"fallback,omitempty"`
 	Fits       bool          `json:"fits"`
 	Changes    []string      `json:"changes,omitempty"`
+
+	// Calibration is populated by `wool fit --calibrated`. It never changes
+	// Estimate; Corrected and CorrectedHeadroom are the calibrated view.
+	Calibration       *measure.Calibration `json:"calibration,omitempty"`
+	Calibrated        bool                 `json:"calibrated,omitempty"`
+	Corrected         uint64               `json:"corrected_bytes,omitempty"`
+	CorrectedHeadroom int64                `json:"corrected_headroom_bytes,omitempty"`
 }
 
 // Result is the stable JSON shape returned by the CLI.
@@ -88,6 +96,7 @@ type Result struct {
 	Alternatives   []Recommendation `json:"alternatives"`
 	Approximate    bool             `json:"approximate"`
 	SavedPreset    string           `json:"saved_preset,omitempty"`
+	Calibrated     bool             `json:"calibrated,omitempty"`
 	Notes          []string         `json:"notes,omitempty"`
 }
 

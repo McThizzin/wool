@@ -23,7 +23,8 @@ show it next to the estimate.
   `llama-server --version`, estimate bytes, baseline used, observed used,
   sample count, and whether the baseline was known.
 - Dashboard and Doctor show `estimate 6.1 GiB · observed 6.4 GiB (n=3)`.
-- No correction factor yet. That is M3.4.
+- The raw observation is the source for the M3.4 calibration correction; the
+  capture itself does not apply one.
 
 **Implementation notes.** sysfs VRAM includes every process on the card, so
 subtract a pre-launch baseline and store it. If the baseline is unavailable,
