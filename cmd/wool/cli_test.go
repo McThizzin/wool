@@ -45,6 +45,17 @@ func TestParseFitArgsForceNeedsSavePreset(t *testing.T) {
 	}
 }
 
+func TestParseSmokeTimeout(t *testing.T) {
+	if got := parseSmokeTimeout("5s"); got != 5*time.Second {
+		t.Fatalf("timeout = %s, want 5s", got)
+	}
+	for _, raw := range []string{"", "soon", "-1s", "0s"} {
+		if got := parseSmokeTimeout(raw); got != measure.DefaultSmokeTimeout {
+			t.Fatalf("%q: timeout = %s, want default", raw, got)
+		}
+	}
+}
+
 func TestApplyFitCalibration(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("XDG_STATE_HOME", dir)

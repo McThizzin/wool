@@ -20,6 +20,8 @@ port = 8080
 auto_port = true
 startup_timeout = "120s"
 poll_interval = "5s"
+smoke_test = false
+smoke_timeout = "30s"
 
 # ---------------------------------------------------------------------------
 # Shared launch defaults

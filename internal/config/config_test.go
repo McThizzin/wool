@@ -190,3 +190,42 @@ model = "a"
 		t.Fatalf("threads = %d", r.Threads)
 	}
 }
+
+func TestSmokeDefaultsAndValidation(t *testing.T) {
+	cfg, err := Parse([]byte(`
+[models.a]
+path = "a.gguf"
+`), "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Server.SmokeTest {
+		t.Fatal("smoke_test must default to false")
+	}
+	if cfg.Server.SmokeTimeout != "30s" {
+		t.Fatalf("smoke_timeout = %q, want 30s", cfg.Server.SmokeTimeout)
+	}
+
+	cfg, err = Parse([]byte(`
+[server]
+smoke_test = true
+smoke_timeout = "5s"
+[models.a]
+path = "a.gguf"
+`), "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.Server.SmokeTest || cfg.Server.SmokeTimeout != "5s" {
+		t.Fatalf("server = %+v", cfg.Server)
+	}
+
+	if _, err := Parse([]byte(`
+[server]
+smoke_timeout = "soon"
+[models.a]
+path = "a.gguf"
+`), "test"); err == nil {
+		t.Fatal("expected invalid smoke_timeout to fail")
+	}
+}

@@ -112,6 +112,8 @@ port = 8080
 auto_port = true             # omitted means true
 startup_timeout = "120s"
 poll_interval = "1s"         # TUI refresh; clamped to 250ms..1m
+smoke_test = false           # send one tiny prompt after health
+smoke_timeout = "30s"        # bounds the whole smoke request
 
 [defaults]                   # shared launch options
 ctx = 32768
@@ -698,6 +700,29 @@ corrected value is additive and is only applied when the user asks for it with
 `wool fit --calibrated`. Expired-only state is reported as expired instead of
 silently reusing stale samples. Calibration is a hint: other GPU users,
 mmap faulting and sampling lag all confound the observed delta.
+
+## Smoke test
+
+A launch can be healthy and still unable to generate. With
+`[server] smoke_test = true` or `wool run --smoke`, wool sends one
+non-streaming completion after `/health`: a tiny fixed prompt, eight tokens and
+temperature 0. The whole request is bounded by `smoke_timeout` (default 30s)
+through a context, and the client has no separate HTTP timeout, so the
+configured value is the only limit.
+
+`RunSmoke` reduces the outcome to success, `empty response`, `timeout` or a
+short one-line error. The result is written into the same observation record as
+`verified_at` (success only), `smoke_ms` and `smoke_error`; a failed check is
+still recorded. `Store.LatestVerification` returns the newest attempt for a
+launch shape and ignores records without either field, so later plain
+observations do not hide it. The dashboard fit line shows `✓ verified` with the
+time and latency, or the failure reason.
+
+A failure warns by default and leaves the server running. `--strict` requires
+smoke to be enabled, prints the log tail, records the failure and stops the
+child. `--no-wait` skips the check because there is no health wait; combining
+it with `--smoke` is a usage error. The TUI uses the same config flag and runs
+the check in the background before capturing the observation.
 
 ## Benchmarks
 

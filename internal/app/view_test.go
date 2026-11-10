@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -110,6 +111,29 @@ func TestFitLineShowsCalibration(t *testing.T) {
 	m.fit.Calib.Clamped = true
 	if out := strings.Join(m.fitLine(80), "\n"); !strings.Contains(out, "clamped") {
 		t.Fatalf("calibrated fit line missing clamp note:\n%s", out)
+	}
+}
+
+func TestFitLineShowsVerification(t *testing.T) {
+	m := testModel(t)
+	m.fit = fitInfo{
+		Ready:     true,
+		Est:       gguf.Estimate{Total: 8 << 30},
+		HasVerify: true,
+		Verify: measure.Verification{
+			At: time.Unix(1_700_000_000, 0), LatencyMS: 420,
+		},
+	}
+	out := strings.Join(m.fitLine(80), "\n")
+	for _, want := range []string{"✓ verified", "420 ms"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("fit line missing %q:\n%s", want, out)
+		}
+	}
+	m.fit.Verify.Err = "empty response"
+	out = strings.Join(m.fitLine(80), "\n")
+	if !strings.Contains(out, "smoke test failed: empty response") {
+		t.Fatalf("fit line missing smoke failure:\n%s", out)
 	}
 }
 

@@ -77,6 +77,10 @@ type Record struct {
 	Samples     []uint64 `json:"samples_bytes,omitempty"`
 	SampleCount int      `json:"sample_count"`
 
+	VerifiedAt time.Time `json:"verified_at,omitempty"`
+	SmokeMS    float64   `json:"smoke_ms,omitempty"`
+	SmokeError string    `json:"smoke_error,omitempty"`
+
 	ConfigHash string `json:"config_hash,omitempty"`
 	Bench      *Bench `json:"bench,omitempty"`
 }

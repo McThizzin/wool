@@ -142,6 +142,8 @@ type fitInfo struct {
 	Layers    int
 	Calib     measure.Calibration
 	HasCalib  bool
+	Verify    measure.Verification
+	HasVerify bool
 }
 
 type metaEntry struct {
@@ -189,10 +191,13 @@ type measureJob struct {
 	bin           string
 	timeout       time.Duration
 	interval      time.Duration
+	smoke         bool
+	smokeTimeout  time.Duration
 }
 
 type measuredMsg struct {
-	err error
+	err   error
+	smoke *measure.SmokeResult
 }
 
 type doctorMsg struct {
@@ -323,6 +328,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.fitCache = map[string]fitInfo{}
 			m.fitKey = ""
 			m.ensureFit()
+		}
+		if msg.smoke != nil && !msg.smoke.OK() {
+			m.setToast("smoke test: " + oneLine(msg.smoke.Err, 120))
 		}
 		return m, nil
 	case doctorMsg:
@@ -640,6 +648,9 @@ func (m *Model) computeFit(r config.Resolved) fitInfo {
 		}
 		if cal, ok := m.meas.Calibration(shape, id); ok {
 			fi.Calib, fi.HasCalib = cal, true
+		}
+		if verify, ok := m.meas.LatestVerification(shape); ok {
+			fi.Verify, fi.HasVerify = verify, true
 		}
 	}
 	return fi

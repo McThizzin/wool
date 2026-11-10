@@ -64,7 +64,7 @@ wool logs server -n 20
 wool stop server
 ```
 
-`wool run TARGET` uses a preset name or a model ID. The process is started detached; `--no-wait` returns immediately, `--dry-run` prints the `llama-server` argv, and `--restart` replaces an existing standalone server.
+`wool run TARGET` uses a preset name or a model ID. The process is started detached; `--no-wait` returns immediately, `--dry-run` prints the `llama-server` argv, and `--restart` replaces an existing standalone server. `--smoke` sends one tiny prompt after health to prove the preset can generate; `--strict` makes a failed check stop the server and exit non-zero. The check is off by default and can be enabled persistently with `[server] smoke_test = true`.
 
 ## CLI
 
@@ -210,6 +210,8 @@ port = 8080
 auto_port = true
 startup_timeout = "120s"
 poll_interval = "5s"         # TUI refresh; clamped to 250ms..1m
+smoke_test = false           # send one tiny prompt after health
+smoke_timeout = "30s"        # bounds the whole smoke request
 
 [defaults]
 gpu_layers = 999
@@ -249,7 +251,7 @@ Unset keys inherit; explicit zero/false values are preserved. `threads = 0` reso
 
 The dashboard and `wool doctor` decompose the estimate into weights, KV cache and overhead, then compare it with the budget for a new server: GPU total minus `router.memory_margin_mib` minus VRAM used by other processes. A running standalone server's own allocation is excluded so a restart is not charged twice. `wool doctor --json` includes the same `estimate`, `budget`, `headroom_bytes` and `limiting_term` fields. While editing, the preview updates as you type; `enter` commits and `esc` discards.
 
-Successful launches also record one observation in `$XDG_STATE_HOME/wool/measurements/runs.jsonl`: a pre-launch VRAM baseline, samples at 5s and 15s after health, and the estimate for that exact launch. The dashboard and doctor show `estimate 6.1 GiB · observed 6.4 GiB (n=3)`; with at least three matching samples they add `corrected 6.4 GiB (n=3, ±8%)`. The observation is a baseline-subtracted delta, not an exact model footprint, and it is recorded even when the baseline is unknown (shown as `observed unknown`). The correction is the median observed/estimate ratio, clamped to 0.5–2.0, and it is display-only unless `wool fit --calibrated` is used. Samples are ignored when the model file, GPU, driver or `llama-server` version changed. `wool bench` appends records with `kind: "bench"` to the same file; they carry the raw runs, throughput summary and peak VRAM, and are ignored by calibration.
+Successful launches also record one observation in `$XDG_STATE_HOME/wool/measurements/runs.jsonl`: a pre-launch VRAM baseline, samples at 5s and 15s after health, and the estimate for that exact launch. The dashboard and doctor show `estimate 6.1 GiB · observed 6.4 GiB (n=3)`; with at least three matching samples they add `corrected 6.4 GiB (n=3, ±8%)`. The observation is a baseline-subtracted delta, not an exact model footprint, and it is recorded even when the baseline is unknown (shown as `observed unknown`). The correction is the median observed/estimate ratio, clamped to 0.5–2.0, and it is display-only unless `wool fit --calibrated` is used. Samples are ignored when the model file, GPU, driver or `llama-server` version changed. A smoke test adds `verified_at` on success plus `smoke_ms` and `smoke_error`; the dashboard shows `✓ verified` or the short failure reason for the newest attempt. `wool bench` appends records with `kind: "bench"` to the same file; they carry the raw runs, throughput summary and peak VRAM, and are ignored by calibration.
 
 ### Custom themes
 

@@ -21,7 +21,7 @@ Status values: `planned`, `in progress`, `shipped`, `blocked`, `dropped`.
 | M3.2 — Benchmark history and trends | P1 | M | M3.1 | shipped | [m3-02-benchmark-history-and-trends.md](m3-02-benchmark-history-and-trends.md) |
 | M3.3 — A/B comparison | P2 | M | M3.1, M3.2 | shipped | [m3-03-a-b-comparison.md](m3-03-a-b-comparison.md) |
 | M3.4 — Calibration correction | P1 | M | M1.3, M3.1 | shipped | [m3-04-calibration-correction.md](m3-04-calibration-correction.md) |
-| M3.5 — Smoke test on launch | P2 | S | none | planned | [m3-05-smoke-test-on-launch.md](m3-05-smoke-test-on-launch.md) |
+| M3.5 — Smoke test on launch | P2 | S | none | shipped | [m3-05-smoke-test-on-launch.md](m3-05-smoke-test-on-launch.md) |
 | M4.1 — Live inference panel | P1 | M | none | planned | [m4-01-live-inference-panel.md](m4-01-live-inference-panel.md) |
 | M4.2 — Structured request log | P2 | M | M4.1 | planned | [m4-02-structured-request-log.md](m4-02-structured-request-log.md) |
 | M4.3 — Alerts | P1 | M | M4.1 | planned | [m4-03-alerts.md](m4-03-alerts.md) |

@@ -107,12 +107,18 @@ func (m *Model) newMeasureJob(r config.Resolved, instance, bin string) *measureJ
 	if d, err := time.ParseDuration(m.cfg.Server.StartupTimeout); err == nil && d > 0 {
 		timeout = d
 	}
+	smokeTimeout := measure.DefaultSmokeTimeout
+	if d, err := time.ParseDuration(m.cfg.Server.SmokeTimeout); err == nil && d > 0 {
+		smokeTimeout = d
+	}
 	return &measureJob{
-		store:    m.meas,
-		rec:      rec,
-		bin:      bin,
-		timeout:  timeout,
-		interval: m.pollInterval(),
+		store:        m.meas,
+		rec:          rec,
+		bin:          bin,
+		timeout:      timeout,
+		interval:     m.pollInterval(),
+		smoke:        m.cfg.Server.SmokeTest,
+		smokeTimeout: smokeTimeout,
 	}
 }
 
@@ -129,6 +135,17 @@ func (m *Model) captureMeasurement(job *measureJob) tea.Cmd {
 		}
 		rec := job.rec
 		rec.LlamaServerVersion = measure.ServerVersion(job.bin)
+		var smoke *measure.SmokeResult
+		if job.smoke {
+			client := llamaserver.NewClientURL(llamaserver.BaseURL(job.host, job.port))
+			res := measure.RunSmoke(context.Background(), client, job.smokeTimeout)
+			smoke = &res
+			rec.SmokeMS = float64(res.Latency.Milliseconds())
+			rec.SmokeError = res.Err
+			if res.OK() {
+				rec.VerifiedAt = res.At
+			}
+		}
 		cap := measure.Capture{
 			Store:         job.store,
 			Record:        rec,
@@ -136,7 +153,7 @@ func (m *Model) captureMeasurement(job *measureJob) tea.Cmd {
 			BaselineKnown: job.baselineKnown,
 			Sample:        measure.SampleVRAM,
 		}
-		return measuredMsg{err: cap.Run(context.Background())}
+		return measuredMsg{err: cap.Run(context.Background()), smoke: smoke}
 	}
 }
 

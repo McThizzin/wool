@@ -62,6 +62,8 @@ TARGET is a preset name or a model name. run options:
   --restart        stop an existing "server" first
   --port N         use this port instead of the configured one
   --no-wait        return as soon as the process is spawned
+  --smoke          send a tiny prompt after health
+  --strict         fail and stop the server if the smoke test fails
 
 Router options are accepted after "router start": --dry-run, --restart,
 --port N, --no-wait.
@@ -73,6 +75,7 @@ fit options:
   --n-cpu-moe N    override n_cpu_moe
   --save-preset NAME  write the recommendation as presets.NAME
   --force          replace an existing preset
+  --calibrated     apply observed/estimate correction and label it
   --json           print the stable machine-readable result
 
 bench options:
@@ -2113,6 +2116,8 @@ func cmdRun(cfgPath string, args []string) int {
 	restart := fs.Bool("restart", false, "stop an existing server first")
 	port := fs.Int("port", 0, "override the configured port")
 	noWait := fs.Bool("no-wait", false, "do not wait for /health")
+	smoke := fs.Bool("smoke", false, "send a tiny prompt after health")
+	strict := fs.Bool("strict", false, "fail and stop the server if the smoke test fails")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -2120,11 +2125,21 @@ func cmdRun(cfgPath string, args []string) int {
 		fmt.Fprintln(os.Stderr, "usage: wool run TARGET [options]")
 		return 2
 	}
+	if *smoke && *noWait {
+		fmt.Fprintln(os.Stderr, "wool: --smoke requires waiting for /health; drop --no-wait")
+		return 2
+	}
 	cfg, err := loadConfig(cfgPath)
 	if err != nil {
 		printConfigError(cfgPath, err)
 		return 1
 	}
+	smokeEnabled := cfg.Server.SmokeTest || *smoke
+	if *strict && !smokeEnabled {
+		fmt.Fprintln(os.Stderr, "wool: --strict requires --smoke or [server] smoke_test = true")
+		return 2
+	}
+	timeout := parseSmokeTimeout(cfg.Server.SmokeTimeout)
 	if *port > 0 {
 		cfg.Server.Port = *port
 		off := false
@@ -2193,10 +2208,37 @@ func cmdRun(cfgPath string, args []string) int {
 			return 1
 		}
 	}
+	var smokeRes *measure.SmokeResult
+	if smokeEnabled && *noWait {
+		fmt.Fprintln(os.Stderr, "wool: smoke test skipped because --no-wait was used")
+	}
+	if smokeEnabled && !*noWait {
+		fmt.Fprintln(os.Stderr, "wool: smoke test...")
+		client := llamaserver.NewClientURL(llamaserver.BaseURL(host, state.Port))
+		res := measure.RunSmoke(context.Background(), client, timeout)
+		smokeRes = &res
+		if !res.OK() {
+			fmt.Fprintf(os.Stderr, "wool: smoke test failed: %s\n", res.Err)
+			if *strict {
+				rec := launchRecord(cfg, resolved, gpu, bin)
+				applySmokeResult(&rec, smokeRes)
+				rec.At = time.Now()
+				if err := measure.NewStore().Append(rec); err != nil {
+					fmt.Fprintf(os.Stderr, "wool: record failed smoke test: %v\n", err)
+				}
+				printLogTail(mgr, state.Name, 40)
+				_ = mgr.Stop(state.Name, 10*time.Second)
+				return 1
+			}
+		} else {
+			fmt.Fprintf(os.Stderr, "wool: smoke test passed (%d ms)\n", res.Latency.Milliseconds())
+		}
+	}
 	printServer(state, preset)
 	if !*noWait {
 		fmt.Fprintln(os.Stderr, "wool: observing VRAM (5s, 15s)...")
 		rec := launchRecord(cfg, resolved, gpu, bin)
+		applySmokeResult(&rec, smokeRes)
 		cap := measure.Capture{
 			Store:         measure.NewStore(),
 			Record:        rec,
@@ -2209,6 +2251,29 @@ func cmdRun(cfgPath string, args []string) int {
 		}
 	}
 	return 0
+}
+
+// applySmokeResult copies an optional smoke test into a record. A successful
+// attempt sets verified_at; a failure keeps the reason for later display.
+func applySmokeResult(rec *measure.Record, res *measure.SmokeResult) {
+	if rec == nil || res == nil {
+		return
+	}
+	rec.SmokeMS = float64(res.Latency.Milliseconds())
+	rec.SmokeError = res.Err
+	if res.OK() {
+		rec.VerifiedAt = res.At
+	}
+}
+
+// parseSmokeTimeout falls back to the default for an unset or malformed value.
+// Config validation rejects malformed values, so the fallback mainly protects
+// callers that build a Config in memory.
+func parseSmokeTimeout(raw string) time.Duration {
+	if d, err := time.ParseDuration(raw); err == nil && d > 0 {
+		return d
+	}
+	return measure.DefaultSmokeTimeout
 }
 
 // launchRecord turns a resolved target into a measurement record. The estimate

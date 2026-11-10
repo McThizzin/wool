@@ -75,7 +75,7 @@ Shipped foundation:
 | Launch | Detached single-server and router modes, health wait, auto-port, PID/start-tick validation |
 | Config | TOML schema, layered inheritance, validation, provenance/explain, comment-preserving edits and override reset |
 | Fit | Dense, hybrid-attention, sliding-window, shared-KV and MoE-expert VRAM estimate, auto-fit solver with cache/CPU-offload fallbacks, saving a recommendation as a preset, GGUF metadata and tensor reader, AMD telemetry |
-| Measure | `wool bench` against an ephemeral, managed or explicit server; raw runs plus median/min/max, prompt/generation throughput and peak VRAM; bounded history, trend sparklines, two-run comparison and interleaved A/B comparison in the CLI and TUI |
+| Measure | `wool bench` against an ephemeral, managed or explicit server; raw runs plus median/min/max, prompt/generation throughput and peak VRAM; bounded history, trend sparklines, two-run comparison, interleaved A/B comparison and conservative calibration in the CLI and TUI; optional post-health smoke test with a verified badge |
 | Observe | Dashboard, hardware sparklines, log tail, router `/metrics` and `/slots` |
 | Operate | Start/stop/restart, stale-state cleanup, log tailing |
 | CLI | `run`, `stop`, `status`, `logs`, `router`, `list`, `doctor`, `fit`, `bench`, `config`, JSON for some commands |
@@ -465,7 +465,7 @@ boundary.
 | M3.2 | [Benchmark history and trends](features/m3-02-benchmark-history-and-trends.md) | M3 | P1 | M | M3.1 | shipped |
 | M3.3 | [A/B comparison](features/m3-03-a-b-comparison.md) | M3 | P2 | M | M3.1, M3.2 | shipped |
 | M3.4 | [Calibration correction](features/m3-04-calibration-correction.md) | M3 | P1 | M | M1.3, M3.1 | shipped |
-| M3.5 | [Smoke test on launch](features/m3-05-smoke-test-on-launch.md) | M3 | P2 | S | — | planned |
+| M3.5 | [Smoke test on launch](features/m3-05-smoke-test-on-launch.md) | M3 | P2 | S | — | shipped |
 | M4.1 | [Live inference panel](features/m4-01-live-inference-panel.md) | M4 | P1 | M | — | planned |
 | M4.2 | [Structured request log](features/m4-02-structured-request-log.md) | M4 | P2 | M | M4.1 | planned |
 | M4.3 | [Alerts](features/m4-03-alerts.md) | M4 | P1 | M | M4.1 | planned |

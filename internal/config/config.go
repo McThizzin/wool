@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/pelletier/go-toml/v2"
 
@@ -40,6 +41,8 @@ type ServerConfig struct {
 	AutoPort       *bool  `toml:"auto_port,omitempty"`
 	StartupTimeout string `toml:"startup_timeout"`
 	PollInterval   string `toml:"poll_interval"`
+	SmokeTest      bool   `toml:"smoke_test"`
+	SmokeTimeout   string `toml:"smoke_timeout"`
 }
 
 // AutoPortEnabled defaults to true when auto_port is omitted.
@@ -237,6 +240,9 @@ func (c *Config) ApplyDefaults() {
 	if c.Server.PollInterval == "" {
 		c.Server.PollInterval = "1s"
 	}
+	if c.Server.SmokeTimeout == "" {
+		c.Server.SmokeTimeout = "30s"
+	}
 	if c.Models == nil {
 		c.Models = map[string]ModelConfig{}
 	}
@@ -261,6 +267,9 @@ func (c *Config) Validate() error {
 	var errs []error
 	if c.Server.Port < 1 || c.Server.Port > 65535 {
 		errs = append(errs, fmt.Errorf("server.port must be between 1 and 65535"))
+	}
+	if d, err := time.ParseDuration(c.Server.SmokeTimeout); err != nil || d <= 0 {
+		errs = append(errs, fmt.Errorf("server.smoke_timeout must be a positive duration"))
 	}
 	if err := validateSampling("defaults.sampling", applySampling(DefaultSampling(), c.Defaults.Sampling)); err != nil {
 		errs = append(errs, err)

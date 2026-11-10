@@ -360,6 +360,14 @@ func (m *Model) fitLine(w int) []string {
 	if fi.HasCalib {
 		lines = append(lines, st.Muted.Render(calibrationText(est.Total, fi.Calib)))
 	}
+	if fi.HasVerify {
+		if fi.Verify.OK() {
+			lines = append(lines, st.Good.Render(fmt.Sprintf("✓ verified %s · %d ms",
+				fi.Verify.At.Local().Format("01-02 15:04"), int64(fi.Verify.LatencyMS))))
+		} else {
+			lines = append(lines, st.Warn.Render("smoke test failed: "+fi.Verify.Err))
+		}
+	}
 	if !budget.Known {
 		return append(lines, st.Muted.Render("budget unknown (no GPU VRAM detected)"))
 	}
