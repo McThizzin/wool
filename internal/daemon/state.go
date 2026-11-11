@@ -197,6 +197,36 @@ func ValidateName(name string) error {
 	return nil
 }
 
+// groupAlive reports whether the process group still has a live member.
+// Zombies are ignored: they are already dead and only wait to be reaped.
+func groupAlive(pgid int) bool {
+	if pgid <= 0 {
+		return false
+	}
+	entries, err := os.ReadDir("/proc")
+	if err != nil {
+		return false
+	}
+	for _, e := range entries {
+		pid, err := strconv.Atoi(e.Name())
+		if err != nil {
+			continue
+		}
+		g, err := syscall.Getpgid(pid)
+		if err != nil || g != pgid {
+			continue
+		}
+		st, err := readProcStat(pid)
+		if err != nil {
+			continue
+		}
+		if st.state != 'Z' && st.state != 'X' {
+			return true
+		}
+	}
+	return false
+}
+
 // killGroup sends a signal to the whole session/group, falling back to the
 // single process if the group is unknown.
 func killGroup(s State, sig syscall.Signal) error {

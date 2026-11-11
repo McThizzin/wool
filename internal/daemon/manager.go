@@ -127,7 +127,10 @@ func (m *Manager) Start(spec Spec) (State, error) {
 	go func() { _ = cmd.Wait() }()
 
 	pid := cmd.Process.Pid
-	pgid, _ := syscall.Getpgid(pid)
+	// Setsid makes the child a session and process-group leader, so its PGID
+	// is its PID. Reading Getpgid here would race the child's setsid call and
+	// could record the parent's group instead.
+	pgid := pid
 	var ticks uint64
 	for i := 0; i < 20; i++ {
 		ticks, err = StartTicks(pid)
@@ -192,7 +195,7 @@ func (m *Manager) Stop(name string, timeout time.Duration) error {
 func waitDead(s State, timeout time.Duration) bool {
 	deadline := time.Now().Add(timeout)
 	for {
-		if !Alive(s.PID, s.StartTicks) {
+		if !Alive(s.PID, s.StartTicks) && !groupAlive(s.PGID) {
 			return true
 		}
 		if time.Now().After(deadline) {
