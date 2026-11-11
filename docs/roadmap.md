@@ -466,7 +466,7 @@ boundary.
 | M3.3 | [A/B comparison](features/m3-03-a-b-comparison.md) | M3 | P2 | M | M3.1, M3.2 | shipped |
 | M3.4 | [Calibration correction](features/m3-04-calibration-correction.md) | M3 | P1 | M | M1.3, M3.1 | shipped |
 | M3.5 | [Smoke test on launch](features/m3-05-smoke-test-on-launch.md) | M3 | P2 | S | — | shipped |
-| M4.1 | [Live inference panel](features/m4-01-live-inference-panel.md) | M4 | P1 | M | — | planned |
+| M4.1 | [Live inference panel](features/m4-01-live-inference-panel.md) | M4 | P1 | M | — | shipped |
 | M4.2 | [Structured request log](features/m4-02-structured-request-log.md) | M4 | P2 | M | M4.1 | planned |
 | M4.3 | [Alerts](features/m4-03-alerts.md) | M4 | P1 | M | M4.1 | planned |
 | M4.4 | [Crash detection and restart policy](features/m4-04-crash-detection-and-restart-policy.md) | M4 | P1 | L | — | planned |

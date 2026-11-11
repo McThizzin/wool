@@ -603,7 +603,7 @@ func TestHeaderAndFooterLayout(t *testing.T) {
 	m.width, m.height = 120, 40
 	lines := strings.Split(m.View(), "\n")
 	header := lines[0]
-	for _, want := range []string{"[1] Dashboard", "[6] Logs", "wool"} {
+	for _, want := range []string{"[1] Dashboard", "[7] Logs", "wool"} {
 		if !strings.Contains(header, want) {
 			t.Fatalf("header missing %q: %q", want, header)
 		}
@@ -621,7 +621,7 @@ func TestHeaderAndFooterLayout(t *testing.T) {
 	if strings.Contains(header, "Dashboard") {
 		t.Fatalf("expected compact tabs at 80 columns: %q", header)
 	}
-	for _, want := range []string{"[1]", "[6]", "wool"} {
+	for _, want := range []string{"[1]", "[7]", "wool"} {
 		if !strings.Contains(header, want) {
 			t.Fatalf("compact header missing %q: %q", want, header)
 		}

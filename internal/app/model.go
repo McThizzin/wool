@@ -30,14 +30,15 @@ const (
 	tabModels
 	tabPresets
 	tabRouter
+	tabInference
 	tabHardware
 	tabLogs
 	tabBench
 	tabCount
 )
 
-var tabNames = []string{"dashboard", "models", "presets", "router", "hardware", "logs", "bench"}
-var tabTitles = []string{"Dashboard", "Models", "Presets", "Router", "Hardware", "Logs", "Bench"}
+var tabNames = []string{"dashboard", "models", "presets", "router", "inference", "hardware", "logs", "bench"}
+var tabTitles = []string{"Dashboard", "Models", "Presets", "Router", "Inference", "Hardware", "Logs", "Bench"}
 
 func (t tab) String() string {
 	if t < 0 || int(t) >= len(tabNames) {
@@ -76,6 +77,11 @@ type Model struct {
 	stats        llamaserver.Metrics
 	slots        []llamaserver.Slot
 	statsID      string
+	statsErr     string // router-model scrape failure reason, "" when healthy
+	srvStats     llamaserver.Metrics
+	srvSlots     []llamaserver.Slot
+	srvStatsErr  string // standalone-server scrape failure reason
+	inf          inference
 
 	presets     []string
 	models      []string
@@ -168,6 +174,10 @@ type tickMsg struct {
 	stats        llamaserver.Metrics
 	slots        []llamaserver.Slot
 	statsID      string
+	statsErr     string
+	srvStats     llamaserver.Metrics
+	srvSlots     []llamaserver.Slot
+	srvStatsErr  string
 }
 
 type actionMsg struct {
@@ -371,6 +381,17 @@ func (m *Model) applyTick(msg tickMsg) {
 	m.routerModels = msg.models
 	m.routerErr = msg.routerErr
 	m.stats, m.slots, m.statsID = msg.stats, msg.slots, msg.statsID
+	m.statsErr = msg.statsErr
+	m.srvStats, m.srvSlots, m.srvStatsErr = msg.srvStats, msg.srvSlots, msg.srvStatsErr
+
+	// A pinned inference source is dropped once its instance goes away so
+	// the panel follows reality instead of a stale preference.
+	if m.inf.prefer == "server" && !m.hasServer {
+		m.inf.prefer = ""
+	}
+	if m.inf.prefer == "router" && !m.hasRouter {
+		m.inf.prefer = ""
+	}
 
 	if m.routerSelID != "" {
 		for i, rm := range m.routerModels {
@@ -381,6 +402,7 @@ func (m *Model) applyTick(msg tickMsg) {
 		}
 	}
 	m.clampSelections()
+	m.updateInference(msg.at)
 	if m.tab == tabDashboard || m.tab == tabLogs {
 		m.loadLogs()
 	}
@@ -432,6 +454,7 @@ func (m *Model) refreshLater(delay time.Duration) tea.Cmd {
 				} else {
 					msg.serverHealth = "unreachable"
 				}
+				msg.srvStats, msg.srvSlots, msg.srvStatsErr = c.ScrapeInference(ctx, "")
 				cancel()
 			}
 		}
@@ -455,15 +478,13 @@ func (m *Model) refreshLater(delay time.Duration) tea.Cmd {
 					msg.statsID = selected
 					if selected != "" {
 						for _, rm := range mm {
-							if rm.ID == selected && (rm.Status.Value == "loaded" || rm.Status.Value == "sleeping") {
-								if st, err := c.Metrics(ctx, selected); err == nil {
-									msg.stats = st
-								}
-								if slots, err := c.Slots(ctx, selected); err == nil {
-									msg.slots = slots
-								}
-								break
+							if rm.ID != selected {
+								continue
 							}
+							if rm.Status.Value == "loaded" || rm.Status.Value == "sleeping" {
+								msg.stats, msg.slots, msg.statsErr = c.ScrapeInference(ctx, selected)
+							}
+							break
 						}
 					}
 				}
@@ -731,7 +752,7 @@ func (m *Model) moveSelection(delta int) {
 		m.presetSel = clamp(m.presetSel+delta, 0, maxInt(0, len(m.presets)-1))
 	case tabModels:
 		m.modelSel = clamp(m.modelSel+delta, 0, maxInt(0, len(m.models)-1))
-	case tabRouter:
+	case tabRouter, tabInference:
 		m.routerSel = clamp(m.routerSel+delta, 0, maxInt(0, len(m.routerModels)-1))
 		m.routerSelID = m.selectedRouterID()
 	case tabBench:

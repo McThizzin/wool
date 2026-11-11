@@ -410,8 +410,9 @@ footer.
 schedules the next one after `server.poll_interval` (clamped to 250ms..1m);
 actions schedule a faster refresh.
 The background command samples `/proc` and `/sys`, checks both state files,
-calls `/health`, `/models`, and for the selected loaded router model
-`/metrics` and `/slots`. HTTP requests have a two-second timeout, so an
+calls `/health` and `/models`, and scrapes `/metrics` and `/slots` for the
+standalone server when it is alive and for the selected loaded router model.
+HTTP requests have a two-second timeout, so an
 unresponsive server cannot freeze the UI.
 
 Fit and GGUF metadata are cached per target path; missing or unreadable files
@@ -427,15 +428,17 @@ budget is cached by GPU total/used, reserve and the running server PID, so the
 | Models | configured models, file size, VRAM estimate, alias |
 | Presets | recipes with model, context and fit |
 | Router | router state, model list, selected model stats and slots |
+| Inference | live prompt/gen tokens/s, requests, slot occupancy and KV fill, speculative acceptance, sparklines |
 | Hardware | CPU/RAM/GPU sparklines, VRAM, temperature, power, fan |
 | Logs | server or router log, follow/pause and scroll |
+| Bench | recorded benchmark runs, trends, run comparison |
 
 ### Keys
 
 | Key | Action |
 | --- | --- |
 | `tab` / `shift+tab` | next / previous tab |
-| `1`..`6` | jump to tab |
+| `1`..`8` | jump to tab |
 | `j` / `k`, arrows | move selection or scroll logs |
 | `g` / `G` | first / last entry; in logs, tail or follow |
 | `enter` | start selected target, load selected router model, or switch log target |
@@ -443,9 +446,12 @@ budget is cached by GPU total/used, reserve and the running server PID, so the
 | `S` | restart the selected target |
 | `r` / `R` | start / stop the router |
 | `l` / `u` | load / unload the selected router model |
-| `m` | show stats for the selected router model |
+| `i` | focus the Inference panel |
+| `m` | cycle the Inference source (server / router model); elsewhere, show router-model stats |
 | `L` | focus logs |
-| `f` | toggle log follow |
+| `B` | focus the Bench tab |
+| `space` | mark a benchmark run for comparison |
+| `f` | toggle log follow, or cycle the Bench target filter |
 | `e` | edit the selected preset or model |
 | `F` | recommend settings that fit VRAM in the editor |
 | `d` | run doctor |
@@ -473,11 +479,39 @@ completion for command names and model/preset IDs.
 /fit                    open the option editor and fit overlay
 /doctor                 run readiness checks
 /theme [name]           cycle or set a theme
-/tab NAME               dashboard, models, presets, router, hardware, logs
+/tab NAME               dashboard, models, presets, router, inference, hardware, logs, bench
 /logs [server|router]   show a log
 /help                   key and command reference
 /quit                   exit
 ```
+
+### Inference panel
+
+The Inference tab renders one `infSource` at a time: either the standalone
+server or the selected router model. `infResolve` picks the source — the
+user's pinned choice (`m` cycles it) while its instance is alive, otherwise
+the standalone server, otherwise the router — without mutating the model;
+`applyTick` drops a pin whose instance died, and `cycleInfSource` resets the
+panel immediately so the old source's numbers never appear under the new
+header.
+
+Rates come from `llamaserver.Rates`, a counter-delta tracker keyed by the
+source. `updateInference` runs on every tick for the resolved source only,
+so switching targets invalidates the baseline (`key` change) instead of
+computing deltas across two different servers. A decreasing counter means
+the server restarted: the tracker re-seeds, reports `Reset`, and no sample is
+pushed, so the sparklines never draw a dip that never happened. History
+pushes are gated on a completed window (`Window > 0`), which also skips the
+seeding scrape. Token rates prefer the server's own busy counters
+(`prompt_seconds_total`, `tokens_predicted_seconds_total`) so idle time is
+not counted against throughput; wall clock is the fallback.
+
+A metrics scrape that fails (404 = `metrics = false`, unreachable) leaves
+the source in `infNoMetrics`: the panel shows the reason and the fix hint
+instead of zeros. A router-model scrape that targeted a model other than the
+now-selected one (a selection move while the request was in flight) is
+discarded rather than attributed. The panel's right header mirrors the state:
+`live`, `no metrics`, `not loaded`, `down`.
 
 ### Editor
 
@@ -854,6 +888,7 @@ wool list [--json]                   list models and presets
 wool run TARGET [options]            start a model or preset detached
 wool stop [server|router|all]        stop detached servers
 wool status [name] [--json]          show detached server state
+wool stats [MODEL] [options]         live prompt/gen t/s, requests, slots
 wool logs [name] [-n N] [-f]         show a server log
 wool router [start|stop|status|models|load ID|unload ID|reload|ini]
 wool config path                     print the config path
@@ -883,16 +918,26 @@ record; the two per-side bench records are still appended.
 `router start` accepts the same options as `run`. Unless `--no-wait` or
 `--dry-run` is used, `wool run` records one observation after health, so the
 command stays alive through the 5s/15s settle window.
+`stats` takes an optional router MODEL and accepts `--window D` (default 1s)
+and `--json`. It scrapes `/metrics` and `/slots` twice, window apart, and
+computes rates from the counter deltas with `llamaserver.Rates`, the same
+tracker the TUI Inference tab uses. The target is the explicit model (the
+router must be running it), else the standalone server, else the router's
+first loaded or sleeping model. `--json` prints the stable `statsSnapshot`
+(version 1); a metrics scrape failure exits non-zero with the reason instead
+of printing zeros.
 
 ## Testing
 
 - `go test ./...` covers config parsing/merging/edits, provenance, key removal
   and effective-config diffs, GGUF metadata and estimates, dense/hybrid/MoE
   auto-fit solving and fallback ranking, argv/INI generation, router metrics
-  parsing, daemon lifecycle and PID validation, sysinfo parsing, benchmark
-  runners, history filtering and store rotation, `llama-bench` parsing,
-  interleaved A/B comparison and its noise warnings, and TUI rendering at
-  multiple sizes.
+  parsing, rate tracking and scrape classification, daemon lifecycle and PID
+  validation, sysinfo parsing, benchmark runners, history filtering and store
+  rotation, `llama-bench` parsing, interleaved A/B comparison and its noise
+  warnings, `wool stats` text and JSON output, and TUI rendering at multiple
+  sizes, including the Inference panel's seeding, counter-reset and
+  source-switch behaviour.
 - One view test renders every tab at 120x40, 100x30, 80x24, 60x20 and 40x12
   and asserts that no line exceeds the terminal width.
 - Editor tests write to a temporary config and reload it to verify the TOML

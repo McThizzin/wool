@@ -54,7 +54,7 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.setTab((m.tab + 1) % tabCount)
 	case "shift+tab":
 		m.setTab((m.tab - 1 + tabCount) % tabCount)
-	case "1", "2", "3", "4", "5", "6", "7":
+	case "1", "2", "3", "4", "5", "6", "7", "8":
 		m.setTab(tab(msg.String()[0] - '1'))
 	case "j", "down":
 		switch m.tab {
@@ -110,10 +110,14 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "u":
 		return m, m.routerAction(false)
 	case "m":
-		if id := m.selectedRouterID(); id != "" {
+		if m.tab == tabInference {
+			m.cycleInfSource()
+		} else if id := m.selectedRouterID(); id != "" {
 			m.statsID = id
 			m.setToast("showing stats for " + id)
 		}
+	case "i":
+		m.setTab(tabInference)
 	case "L":
 		m.setTab(tabLogs)
 	case "B":

@@ -23,9 +23,10 @@
 - **Auto-fit recommendations.** `wool fit TARGET` binary-searches the largest context that fits the budget, capped at the model's native context. When the requested settings cannot hold a useful context it ranks fallbacks: lower KV cache precision first, then CPU offload (using `n_cpu_moe` for MoE models). Every recommendation is within budget and includes weights, KV, overhead, headroom, the limiting term and the changes it makes. `--save-preset NAME` writes the result as a new preset.
 - **Benchmarks and history.** `wool bench TARGET` starts an ephemeral server, warms up, and records prompt and generation throughput over repeated runs with median/min/max and peak VRAM. It can attach to a matching managed server or any `--url`, and optionally drive `llama-bench`. `wool bench history` and the Bench tab show past runs, trends and a two-run comparison. `wool bench compare A B` runs two targets interleaved and reports the median, spread and percentage delta.
 - **Observed vs. estimate.** After a launch, `wool` records used VRAM at 5s and 15s and shows it next to the estimate with a sample count. With at least three matching samples, the dashboard and doctor also show a median correction, clamped to 0.5–2.0; the raw estimate is always kept. Samples expire when the model file, GPU, driver or `llama-server` version changes.
+- **Live inference panel.** The Inference tab shows prompt and generation tokens/s, request counts, slot occupancy and KV-cache fill, and speculative-decoding acceptance, with sparklines, sourced from the server's `/metrics` and `/slots`. It follows the standalone server or the selected router model, and `wool stats [MODEL] [--json]` prints the same numbers for scripts.
 - **Hardware telemetry.** CPU, RAM, AMD `amdgpu` VRAM, temperature, power, fan, and sparklines, with no extra daemon required.
 - **Preset and model editing.** Edit resolved launch options in the TUI; changes are written back to TOML with comments and ordering preserved. Changing `ctx`, cache type, `gpu_layers` or `n_cpu_moe` previews the new estimate without saving.
-- **Seven tabs, themes, commands.** Dashboard, Models, Presets, Router, Hardware, Logs, Bench; built-in and custom themes; slash commands and completion.
+- **Eight tabs, themes, commands.** Dashboard, Models, Presets, Router, Inference, Hardware, Logs, Bench; built-in and custom themes; slash commands and completion.
 - **Doctor.** Checks the binary, model files, hardware, and VRAM fit before you launch.
 
 ## Requirements
@@ -84,6 +85,7 @@ wool list [--json]                   list models and presets
 wool run TARGET [options]            start a model or preset detached
 wool stop [server|router|all]        stop detached servers
 wool status [name] [--json]          show detached server state
+wool stats [MODEL] [--json]          live prompt/gen t/s, requests, slots
 wool logs [name] [-n N] [-f]         show a server log
 wool router [start|stop|status|models|load ID|unload ID|reload|ini]
 wool config path                     print the config path
@@ -94,6 +96,14 @@ wool version
 ```
 
 Router start accepts `--dry-run`, `--restart`, `--port N`, and `--no-wait`.
+
+`wool stats [MODEL]` scrapes `/metrics` and `/slots` twice, `--window D`
+apart (default 1s), and prints window and lifetime prompt/generation
+throughput, request counts, slot occupancy and KV fill, plus speculative
+acceptance when in use. It targets an explicit router MODEL, else the
+standalone server, else the router's first loaded model. `--json` prints the
+stable versioned snapshot for scripts. A server started with `metrics = false`
+makes the command fail with the reason instead of printing zeros.
 
 `wool fit TARGET` accepts a preset name or model ID plus `--vram SIZE`,
 `--cache-type TYPE`, `--gpu-layers N`, `--n-cpu-moe N`, `--save-preset NAME`,
@@ -196,6 +206,30 @@ the target filter, and `D` opens the M1.4 config diff for the selected run's
 target. `/bench compare A B` opens the newest recorded run of each target in the
 same comparison overlay.
 
+## Live inference
+
+`wool stats [MODEL]` and the Inference tab (`i`, or key `5`) read the server's
+`/metrics` and `/slots` every poll interval. Rates are counter deltas over the
+server's own busy seconds (`prompt_seconds_total`,
+`tokens_predicted_seconds_total`), with wall clock as the fallback, so idle
+time between requests is not counted against throughput. The panel shows
+prompt and generation tokens/s with sparklines, requests processing/deferred,
+slot occupancy with per-slot KV fill bars, and speculative-decoding acceptance
+when the model uses it.
+
+The source is the standalone server when it is running, otherwise the
+selected router model; `m` on the Inference tab cycles between the two, and
+`j`/`k` picks another router model. A counter that decreases means the server
+restarted, so the baseline is re-seeded and the panel says so instead of
+printing a negative dip. Servers started with `metrics = false` (it defaults
+to true) get an explicit "metrics unavailable" message rather than zeros.
+
+```sh
+wool stats                     # whichever server is running
+wool stats qwen-cyber-32k      # one router model, by ID
+wool stats --window 2s --json  # stable snapshot for scripts
+```
+
 ## Configuration
 
 The default config is `~/.config/wool/config.toml` (XDG-aware). `config.example.toml` is a complete, commented starting point.
@@ -275,7 +309,7 @@ Supported color keys: `border`, `accent`, `text`, `dim`, `badge_fg`, `red`, `yel
 | Key | Action |
 | --- | --- |
 | `tab` / `shift+tab` | next / previous tab |
-| `1`..`7` | jump to tab |
+| `1`..`8` | jump to tab |
 | `j` / `k`, arrows | move selection or scroll logs |
 | `g` / `G` | first / last entry; in logs, tail or follow |
 | `enter` | start target, load router model, switch log target, or compare bench runs |
@@ -283,7 +317,8 @@ Supported color keys: `border`, `accent`, `text`, `dim`, `badge_fg`, `red`, `yel
 | `S` | restart the selected target |
 | `r` / `R` | start / stop the router |
 | `l` / `u` | load / unload the selected router model |
-| `m` | show stats for the selected router model |
+| `i` | focus the Inference panel |
+| `m` | cycle the Inference source (server / router model); elsewhere, show router-model stats |
 | `L` | focus logs |
 | `B` | focus the Bench history tab |
 | `space` | mark a benchmark run for comparison |

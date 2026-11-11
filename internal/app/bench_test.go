@@ -264,9 +264,9 @@ func TestBenchTabKeys(t *testing.T) {
 	if _, _ = m.handleKey(keyMsg("esc")); m.benchMarkSet {
 		t.Fatal("esc did not clear the mark")
 	}
-	// 7 jumps to bench from another tab.
+	// 8 jumps to bench from another tab.
 	m.setTab(tabDashboard)
-	if _, _ = m.handleKey(keyMsg("7")); m.tab != tabBench {
+	if _, _ = m.handleKey(keyMsg("8")); m.tab != tabBench {
 		t.Fatalf("tab = %v, want bench", m.tab)
 	}
 }

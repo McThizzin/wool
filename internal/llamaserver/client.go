@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -315,6 +316,10 @@ func (c *Client) Slots(ctx context.Context, model string) ([]Slot, error) {
 	return wrapper.Slots, nil
 }
 
+// ErrMetricsDisabled reports a 404 from /metrics, which llama-server answers
+// with when the server was started without --metrics.
+var ErrMetricsDisabled = errors.New("metrics are disabled on this server (start it with --metrics)")
+
 // Metrics fetches and parses /metrics. A router needs the model ID.
 func (c *Client) Metrics(ctx context.Context, model string) (Metrics, error) {
 	path := "/metrics"
@@ -323,9 +328,36 @@ func (c *Client) Metrics(ctx context.Context, model string) (Metrics, error) {
 	}
 	text, err := c.getText(ctx, path)
 	if err != nil {
+		var apiErr *APIError
+		if errors.As(err, &apiErr) && apiErr.Status == http.StatusNotFound {
+			return Metrics{}, ErrMetricsDisabled
+		}
 		return Metrics{}, err
 	}
 	return ParseMetrics(text), nil
+}
+
+// ScrapeInference fetches /metrics and /slots for one target and classifies
+// failures for display. The returned reason is empty when the metrics scrape
+// succeeded; when it failed, slots are still returned if /slots works, so a
+// metrics-disabled server can show occupancy.
+func (c *Client) ScrapeInference(ctx context.Context, model string) (Metrics, []Slot, string) {
+	var m Metrics
+	var reason string
+	st, err := c.Metrics(ctx, model)
+	switch {
+	case err != nil:
+		reason = strings.TrimSpace(err.Error())
+	case len(st.Raw) == 0:
+		reason = "no metrics exposed"
+	default:
+		m = st
+	}
+	var slots []Slot
+	if sl, err := c.Slots(ctx, model); err == nil {
+		slots = sl
+	}
+	return m, slots, reason
 }
 
 // ParseMetrics parses the Prometheus text exposition format used by
