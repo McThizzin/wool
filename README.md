@@ -2,12 +2,16 @@
 
 `wool` is a terminal UI and CLI for running [`llama-server`](https://github.com/ggml-org/llama.cpp) on a Linux workstation. It is a single control surface for standalone launches and llama.cpp router mode: every server runs detached, survives the UI, and can be reattached later.
 
-![logo](assets/wool_logo.png)
+<p align="center">
+  <img src="assets/wool_logo.png" width="100%">
+</p>
 
 - **Single-server mode** — launch one preset or model, detached, then inspect logs and status from a later invocation.
 - **Router mode** — run `llama-server` in router mode with a generated `models.ini`, then load, unload, and inspect models through the router API.
 
-![sreenshot](assets/wool_screenshot.png)
+<p align="center">
+  <img src="assets/wool_screenshot.png" width="100%">
+</p>
 
 ## Features
 
