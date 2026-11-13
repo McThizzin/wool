@@ -18,6 +18,7 @@ import (
 	"wool/internal/gguf"
 	"wool/internal/llamaserver"
 	"wool/internal/measure"
+	"wool/internal/reqlog"
 	"wool/internal/sysinfo"
 	"wool/internal/theme"
 	"wool/internal/ui"
@@ -107,6 +108,12 @@ type Model struct {
 	logScroll int
 	follow    bool
 	logName   string
+
+	reqlog    *reqlog.Parser // structured request rows for logKey
+	logKey    string         // target the parser belongs to
+	logSeen   []string       // previous tail, used to feed only new lines
+	logRaw    bool           // show the raw log instead of the table
+	logFilter string         // model filter; "" shows every model
 
 	benchRuns    []measure.Record
 	benchAll     []measure.Record
@@ -500,6 +507,9 @@ func (m *Model) loadLogs() {
 	name := m.logTarget()
 	if name == "" {
 		m.logLines = []string{"no server has been started yet"}
+		m.logSeen = nil
+		m.reqlog = nil
+		m.logKey = ""
 		return
 	}
 	lines, err := m.mgr.Tail(name, 500)
@@ -509,8 +519,26 @@ func (m *Model) loadLogs() {
 		} else {
 			m.logLines = []string{"log: " + err.Error()}
 		}
+		m.logSeen = nil
+		m.reqlog = nil
+		m.logKey = ""
 		return
 	}
+	if m.logKey != name {
+		m.resetReqlog(name)
+	}
+	if m.reqlog == nil {
+		m.reqlog = reqlog.New(reqlogRows)
+	}
+	fresh, reset := newLogLines(m.logSeen, lines)
+	if reset {
+		m.reqlog.Reset()
+	}
+	at := time.Now()
+	for _, line := range fresh {
+		m.reqlog.Feed(line, at)
+	}
+	m.logSeen = lines
 	m.logLines = lines
 	if m.follow {
 		m.logScroll = 0
@@ -846,7 +874,7 @@ func (m *Model) reloadConfig() {
 func (m *Model) scrollLogs(delta int) {
 	m.follow = false
 	m.logScroll += delta
-	maxScroll := maxInt(0, len(m.logLines)-1)
+	maxScroll := maxInt(0, m.logRowCount()-1)
 	m.logScroll = clamp(m.logScroll, 0, maxScroll)
 }
 

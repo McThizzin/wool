@@ -27,6 +27,7 @@ import (
 	"wool/internal/gguf"
 	"wool/internal/llamaserver"
 	"wool/internal/measure"
+	"wool/internal/reqlog"
 	"wool/internal/sysinfo"
 )
 
@@ -51,7 +52,7 @@ Usage:
   wool stop [server|router|all]        stop detached servers
   wool status [name] [--json]          show detached server state
   wool stats [MODEL] [options]         live inference rates from the running server
-  wool logs [name] [-n N] [-f]         show a server log
+  wool logs [name] [-n N] [-f] [--json] show a server log, or parsed requests
   wool router [start|stop|status|models|load ID|unload ID|reload|ini]
   wool config path                     print the config path
   wool config init [--force] [PATH]    write a sample config
@@ -2780,13 +2781,29 @@ func trimTokens(f float64) string {
 	return fmt.Sprintf("%.1f", f)
 }
 
+// logsSnapshot is the stable --json shape for parsed request rows.
+type logsSnapshot struct {
+	Version    int          `json:"version"`
+	Source     string       `json:"source"`
+	BestEffort bool         `json:"best_effort"`
+	Recognized bool         `json:"recognized"`
+	Rows       []reqlog.Row `json:"rows"`
+}
+
+const logsVersion = 1
+
 func cmdLogs(cfgPath string, args []string) int {
 	_ = cfgPath
 	fs := flag.NewFlagSet("logs", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	n := fs.Int("n", 100, "number of lines")
 	follow := fs.Bool("f", false, "follow the log")
+	asJSON := fs.Bool("json", false, "print parsed request rows as JSON")
 	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	if *asJSON && *follow {
+		fmt.Fprintln(os.Stderr, "wool: --json cannot be combined with -f")
 		return 2
 	}
 	mgr := daemon.NewManager()
@@ -2807,6 +2824,41 @@ func cmdLogs(cfgPath string, args []string) int {
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "wool: %v\n", err)
 		return 1
+	}
+	if *asJSON {
+		p := reqlog.New(0)
+		at := time.Now()
+		for _, line := range lines {
+			p.Feed(line, at)
+		}
+		rows := p.Rows()
+		if rows == nil {
+			rows = []reqlog.Row{}
+		} else {
+			rows = append([]reqlog.Row(nil), rows...)
+		}
+		model := ""
+		if inst, err := mgr.Status(name); err == nil {
+			model = inst.Preset
+			if model == "" {
+				model = inst.Model
+			}
+			if model == "" && inst.Kind == daemon.KindRouter {
+				model = "router"
+			}
+		}
+		for i := range rows {
+			if rows[i].Model == "" {
+				rows[i].Model = model
+			}
+		}
+		return writeJSON(logsSnapshot{
+			Version:    logsVersion,
+			Source:     name,
+			BestEffort: true,
+			Recognized: p.Recognized(),
+			Rows:       rows,
+		})
 	}
 	fmt.Println(strings.Join(lines, "\n"))
 	if !*follow {

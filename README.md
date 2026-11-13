@@ -24,6 +24,7 @@
 - **Benchmarks and history.** `wool bench TARGET` starts an ephemeral server, warms up, and records prompt and generation throughput over repeated runs with median/min/max and peak VRAM. It can attach to a matching managed server or any `--url`, and optionally drive `llama-bench`. `wool bench history` and the Bench tab show past runs, trends and a two-run comparison. `wool bench compare A B` runs two targets interleaved and reports the median, spread and percentage delta.
 - **Observed vs. estimate.** After a launch, `wool` records used VRAM at 5s and 15s and shows it next to the estimate with a sample count. With at least three matching samples, the dashboard and doctor also show a median correction, clamped to 0.5–2.0; the raw estimate is always kept. Samples expire when the model file, GPU, driver or `llama-server` version changes.
 - **Live inference panel.** The Inference tab shows prompt and generation tokens/s, request counts, slot occupancy and KV-cache fill, and speculative-decoding acceptance, with sparklines, sourced from the server's `/metrics` and `/slots`. It follows the standalone server or the selected router model, and `wool stats [MODEL] [--json]` prints the same numbers for scripts.
+- **Structured request log.** The Logs tab parses the request-completion lines `llama-server` already writes into a best-effort table of timestamp, model, prompt/generated tokens, prompt/generation time, cache hits and status. `v` toggles the raw log, `m` filters by model, and `f` pauses or follows. Unknown formats fall back to the raw log with a note, and `wool logs --json` prints the same rows for scripts.
 - **Hardware telemetry.** CPU, RAM, AMD `amdgpu` VRAM, temperature, power, fan, and sparklines, with no extra daemon required.
 - **Preset and model editing.** Edit resolved launch options in the TUI; changes are written back to TOML with comments and ordering preserved. Changing `ctx`, cache type, `gpu_layers` or `n_cpu_moe` previews the new estimate without saving.
 - **Eight tabs, themes, commands.** Dashboard, Models, Presets, Router, Inference, Hardware, Logs, Bench; built-in and custom themes; slash commands and completion.
@@ -86,7 +87,7 @@ wool run TARGET [options]            start a model or preset detached
 wool stop [server|router|all]        stop detached servers
 wool status [name] [--json]          show detached server state
 wool stats [MODEL] [--json]          live prompt/gen t/s, requests, slots
-wool logs [name] [-n N] [-f]         show a server log
+wool logs [name] [-n N] [-f] [--json] show a server log, or parsed requests
 wool router [start|stop|status|models|load ID|unload ID|reload|ini]
 wool config path                     print the config path
 wool config init [--force] [PATH]    write a sample config
@@ -230,6 +231,36 @@ wool stats qwen-cyber-32k      # one router model, by ID
 wool stats --window 2s --json  # stable snapshot for scripts
 ```
 
+## Request log
+
+The Logs tab (`L`, or key `7`) defaults to a structured table built from the
+request-completion lines `llama-server` writes to its log. A row appears when a
+timing block completes, with the time wool first saw it, the model, prompt and
+generated tokens, prompt and generation milliseconds, cache hits and status.
+Non-2xx `log_server_r` lines become error rows. `v` switches to the raw log,
+`m` cycles the model filter, `f` pauses or follows, and `j`/`k` scroll. The
+header marks the view `best effort`; the raw log is always one key away.
+
+The table keeps the newest 200 completed requests in memory. It is rebuilt
+incrementally as the log grows, and resets when the target changes or the log
+is truncated or rotated. Parsing covers the two common `llama-server` layouts
+(`n_prompt_tokens` and `task.n_tokens`); progress and unrelated lines are
+ignored rather than turned into rows. When no known line has been seen, the
+tab shows the raw log with an `unrecognised ... request log` note. Router child
+lines are attributed to a model by their `[port]` prefix when the router
+reports a matching `--port`; otherwise they are labelled `router`. Standalone
+rows use the running preset or model.
+
+```sh
+wool logs server --json        # parsed rows, best effort
+wool logs router -n 500 --json # parse more of the tail
+```
+
+`--json` prints the stable `logsSnapshot` (version 1) with `source`,
+`best_effort`, `recognized` and `rows`. `--json` cannot be combined with `-f`.
+`-n` bounds how many raw log lines are read before parsing (default 100), so
+increase it to capture more history.
+
 ## Configuration
 
 The default config is `~/.config/wool/config.toml` (XDG-aware). `config.example.toml` is a complete, commented starting point.
@@ -318,7 +349,8 @@ Supported color keys: `border`, `accent`, `text`, `dim`, `badge_fg`, `red`, `yel
 | `r` / `R` | start / stop the router |
 | `l` / `u` | load / unload the selected router model |
 | `i` | focus the Inference panel |
-| `m` | cycle the Inference source (server / router model); elsewhere, show router-model stats |
+| `m` | cycle the Inference source (server / router model), or the Logs model filter; elsewhere, show router-model stats |
+| `v` | toggle the Logs tab between structured requests and the raw log |
 | `L` | focus logs |
 | `B` | focus the Bench history tab |
 | `space` | mark a benchmark run for comparison |
@@ -394,6 +426,7 @@ internal/gguf/     GGUF metadata reader and VRAM estimate
 internal/fit/      auto-fit solver, fallback ranking and size parsing
 internal/measure/  observed VRAM and benchmark JSONL store, launch capture
 internal/bench/    server and llama-bench runners, summaries, VRAM sampling, A/B comparison
+internal/reqlog/   llama-server request-log parser and bounded row tail
 internal/sysinfo/  /proc and AMD sysfs telemetry
 internal/doctor/   readiness checks
 internal/theme/    palettes, styles, icons, custom themes

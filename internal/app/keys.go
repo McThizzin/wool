@@ -110,11 +110,26 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "u":
 		return m, m.routerAction(false)
 	case "m":
-		if m.tab == tabInference {
+		switch m.tab {
+		case tabInference:
 			m.cycleInfSource()
-		} else if id := m.selectedRouterID(); id != "" {
-			m.statsID = id
-			m.setToast("showing stats for " + id)
+		case tabLogs:
+			m.cycleLogFilter()
+		default:
+			if id := m.selectedRouterID(); id != "" {
+				m.statsID = id
+				m.setToast("showing stats for " + id)
+			}
+		}
+	case "v":
+		if m.tab == tabLogs {
+			m.logRaw = !m.logRaw
+			m.logScroll = 0
+			if m.logRaw {
+				m.setToast("raw log")
+			} else {
+				m.setToast("structured request log (best effort)")
+			}
 		}
 	case "i":
 		m.setTab(tabInference)

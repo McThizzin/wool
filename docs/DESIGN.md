@@ -64,6 +64,7 @@ supported. The router itself owns the lifecycle of the models it loads.
 | `internal/fit` | auto-fit solver, context search, fallback ranking and size parsing |
 | `internal/measure` | observed-VRAM and benchmark JSONL store, launch capture |
 | `internal/bench` | server and `llama-bench` benchmark runners, summaries, VRAM sampling, A/B comparison |
+| `internal/reqlog` | best-effort `llama-server` request-log parser and bounded row tail |
 | `internal/sysinfo` | Linux `/proc` + AMD sysfs telemetry and graph history |
 | `internal/doctor` | readiness checks and report rendering |
 | `internal/ui` | ANSI-aware width fitting, panels, bars, sparklines |
@@ -430,7 +431,7 @@ budget is cached by GPU total/used, reserve and the running server PID, so the
 | Router | router state, model list, selected model stats and slots |
 | Inference | live prompt/gen tokens/s, requests, slot occupancy and KV fill, speculative acceptance, sparklines |
 | Hardware | CPU/RAM/GPU sparklines, VRAM, temperature, power, fan |
-| Logs | server or router log, follow/pause and scroll |
+| Logs | structured request table by default, raw log fallback, follow/pause, model filter and scroll |
 | Bench | recorded benchmark runs, trends, run comparison |
 
 ### Keys
@@ -447,7 +448,8 @@ budget is cached by GPU total/used, reserve and the running server PID, so the
 | `r` / `R` | start / stop the router |
 | `l` / `u` | load / unload the selected router model |
 | `i` | focus the Inference panel |
-| `m` | cycle the Inference source (server / router model); elsewhere, show router-model stats |
+| `m` | cycle the Inference source (server / router model), or the Logs model filter; elsewhere, show router-model stats |
+| `v` | toggle the Logs tab between structured requests and the raw log |
 | `L` | focus logs |
 | `B` | focus the Bench tab |
 | `space` | mark a benchmark run for comparison |
@@ -512,6 +514,37 @@ instead of zeros. A router-model scrape that targeted a model other than the
 now-selected one (a selection move while the request was in flight) is
 discarded rather than attributed. The panel's right header mirrors the state:
 `live`, `no metrics`, `not loaded`, `down`.
+
+### Structured request log
+
+`internal/reqlog` turns the request-completion lines `llama-server` already
+writes into `Row` values: timestamp, model/port, prompt and generated tokens,
+prompt and generation milliseconds, total milliseconds, cache hits and status.
+It is deliberately isolated and stateful, keyed by `(slot, task)`, because the
+prompt size, timings and HTTP status arrive on different lines. Two layouts are
+recognised — older logs print `slot print_timing:` on its own line followed by
+bare `prompt eval time`, `eval time` and `total time` lines with
+`n_prompt_tokens`; newer logs put `prompt eval time` on the `print_timing` line
+and use `task.n_tokens`. Progress `print_timing` lines with a payload are
+ignored and never start a timing block.
+
+A row is emitted when `total time` closes the block, with status 200. Cache
+hits are `prompt tokens - prompt-eval tokens`, clamped at zero. A non-2xx
+`log_server_r` line has no slot/task to join to a block, so it becomes an
+error row on its own. Anything unrecognised is ignored. `Recognized()` reports
+whether any known line was seen; when it is false the TUI shows the raw log
+with an `unrecognised` note instead of an empty table.
+
+The TUI feeds new lines by diffing the re-read tail (`newLogLines`): the
+overlap with the previous tail is skipped, and a shorter tail or no overlap
+resets the parser first, so truncation and rotation cannot leave stale pending
+state. `logRowModel` attributes standalone rows to the running preset/model;
+router rows use the child `[port]` prefix and the router model list's
+`--port` argument, falling back to `router`. The table keeps
+`reqlog.DefaultRows` (200) completed rows. `wool logs --json` runs the same
+parser over `-n` tail lines and prints the stable `logsSnapshot` (version 1)
+with `source`, `best_effort`, `recognized` and `rows`; it is rejected with
+`-f`.
 
 ### Editor
 
@@ -889,7 +922,7 @@ wool run TARGET [options]            start a model or preset detached
 wool stop [server|router|all]        stop detached servers
 wool status [name] [--json]          show detached server state
 wool stats [MODEL] [options]         live prompt/gen t/s, requests, slots
-wool logs [name] [-n N] [-f]         show a server log
+wool logs [name] [-n N] [-f] [--json] show a server log, or parsed requests
 wool router [start|stop|status|models|load ID|unload ID|reload|ini]
 wool config path                     print the config path
 wool config init [--force] [PATH]    write a sample config
@@ -926,6 +959,12 @@ router must be running it), else the standalone server, else the router's
 first loaded or sleeping model. `--json` prints the stable `statsSnapshot`
 (version 1); a metrics scrape failure exits non-zero with the reason instead
 of printing zeros.
+`logs` takes an optional `server` or `router` name, `-n N` (tail lines to read,
+default 100), `-f` to follow, and `--json` to print parsed request rows. The
+JSON shape is the stable `logsSnapshot` (version 1): `source`, `best_effort`,
+`recognized` and `rows`. It parses the same `-n` tail and cannot be combined
+with `-f`. Without a name it picks the running standalone server, then the
+router. Raw output is unchanged when `--json` is omitted.
 
 ## Testing
 
@@ -935,9 +974,11 @@ of printing zeros.
   parsing, rate tracking and scrape classification, daemon lifecycle and PID
   validation, sysinfo parsing, benchmark runners, history filtering and store
   rotation, `llama-bench` parsing, interleaved A/B comparison and its noise
-  warnings, `wool stats` text and JSON output, and TUI rendering at multiple
-  sizes, including the Inference panel's seeding, counter-reset and
-  source-switch behaviour.
+  warnings, `wool stats` text and JSON output, request-log parsing against old
+  and new `llama-server` fixtures, the bounded row tail, and TUI rendering at
+  multiple sizes, including the Inference panel's seeding, counter-reset and
+  source-switch behaviour and the Logs tab's structured view, fallback and
+  model filter.
 - One view test renders every tab at 120x40, 100x30, 80x24, 60x20 and 40x12
   and asserts that no line exceeds the terminal width.
 - Editor tests write to a temporary config and reload it to verify the TOML
@@ -985,7 +1026,10 @@ criteria. The limitations below are the current state, not the plan.
 - There is no automatic restart/supervision of the standalone server in v1.
   Router-managed models are supervised by `llama-server` itself.
 - Logs are tailed from disk on a timer rather than streamed; this is simple
-  and works across reattachments.
+  and works across reattachments. The structured request table is best effort:
+  `llama-server` log formats drift, unknown lines are ignored, and a format
+  change shows the raw log rather than guessed rows. It keeps the newest 200
+  requests in memory only, so history before the current tail is not parsed.
 - Benchmarks are single-stream and short by default. They measure one fixed
   prompt, not concurrent load, and prompt length is approximated by repeating a
   sentence rather than tokenizing. Peak VRAM is a sampled system-wide delta and
