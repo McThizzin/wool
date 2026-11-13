@@ -216,6 +216,21 @@ sleep_idle_seconds = -1
 metrics = true
 
 # ---------------------------------------------------------------------------
+# Alerts
+# ---------------------------------------------------------------------------
+# Best-effort warnings in the status bar. notify = true uses notify-send when
+# it is installed; a missing binary is ignored. The webhook receives one JSON
+# POST per alert with a short timeout. Keep secrets in the URL out of logs.
+
+[alerts]
+enabled = false
+temp_c = 90
+vram_percent = 95
+cooldown = "5m"
+notify = false
+webhook = ""
+
+# ---------------------------------------------------------------------------
 # Custom themes
 # ---------------------------------------------------------------------------
 # A custom theme starts from a built-in (mocha, tokyo, gruvbox, nord) or from

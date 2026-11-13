@@ -13,6 +13,7 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 
+	"wool/internal/alerts"
 	"wool/internal/config"
 	"wool/internal/daemon"
 	"wool/internal/gguf"
@@ -126,6 +127,10 @@ type Model struct {
 	benchStamp   string
 	benchLoaded  bool
 
+	alertEngine *alerts.Engine
+	alertList   []alerts.Alert
+	alertCmd    tea.Cmd
+
 	command  bool
 	input    textinput.Model
 	history  []string
@@ -185,6 +190,7 @@ type tickMsg struct {
 	srvStats     llamaserver.Metrics
 	srvSlots     []llamaserver.Slot
 	srvStatsErr  string
+	alertLogs    map[string][]string
 }
 
 type actionMsg struct {
@@ -248,18 +254,19 @@ func newModel(cfg *config.Config, cfgPath string, mgr *daemon.Manager) *Model {
 		th, _ = theme.Get("mocha")
 	}
 	m := &Model{
-		cfg:       cfg,
-		cfgPath:   cfgPath,
-		mgr:       mgr,
-		sys:       sysinfo.NewCollector(),
-		hist:      sysinfo.NewHistory(120),
-		meas:      measure.NewStore(),
-		render:    ui.New(th, cfg.App.NerdFonts),
-		themeName: th.Name,
-		fitCache:  map[string]fitInfo{},
-		meta:      map[string]metaEntry{},
-		follow:    true,
-		input:     textinput.New(),
+		cfg:         cfg,
+		cfgPath:     cfgPath,
+		mgr:         mgr,
+		sys:         sysinfo.NewCollector(),
+		hist:        sysinfo.NewHistory(120),
+		meas:        measure.NewStore(),
+		render:      ui.New(th, cfg.App.NerdFonts),
+		themeName:   th.Name,
+		fitCache:    map[string]fitInfo{},
+		meta:        map[string]metaEntry{},
+		follow:      true,
+		input:       textinput.New(),
+		alertEngine: alerts.New(alerts.FromConfig(cfg.Alerts)),
 	}
 	m.presets = cfg.PresetIDs()
 	m.models = cfg.ModelIDs()
@@ -318,7 +325,12 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.spinnerTick()
 	case tickMsg:
 		m.applyTick(msg)
-		return m, m.refreshLater(m.pollInterval())
+		cmd := m.refreshLater(m.pollInterval())
+		if m.alertCmd != nil {
+			cmd = tea.Batch(cmd, m.alertCmd)
+			m.alertCmd = nil
+		}
+		return m, cmd
 	case actionMsg:
 		m.busy = ""
 		m.actionAt = time.Now()
@@ -372,6 +384,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m *Model) applyTick(msg tickMsg) {
+	m.alertCmd = nil
 	m.snap = msg.snap
 	m.hist.Push(msg.snap)
 	if m.cpuSamples == 0 {
@@ -413,6 +426,7 @@ func (m *Model) applyTick(msg tickMsg) {
 	if m.tab == tabDashboard || m.tab == tabLogs {
 		m.loadLogs()
 	}
+	m.evaluateAlerts(msg)
 	if m.tab == tabBench {
 		m.loadBenchHistory()
 	}
@@ -443,6 +457,7 @@ func (m *Model) refreshLater(delay time.Duration) tea.Cmd {
 	sys := m.sys
 	selected := m.selectedRouterID()
 	tabAt := m.tab
+	alertsOn := m.alertEngine != nil && m.alertEngine.Enabled()
 	return func() tea.Msg {
 		if delay > 0 {
 			time.Sleep(delay)
@@ -496,6 +511,19 @@ func (m *Model) refreshLater(delay time.Duration) tea.Cmd {
 					}
 				}
 				cancel()
+			}
+		}
+		if alertsOn {
+			msg.alertLogs = map[string][]string{}
+			if msg.hasServer {
+				if lines, err := mgr.Tail("server", 200); err == nil {
+					msg.alertLogs["server"] = lines
+				}
+			}
+			if msg.hasRouter {
+				if lines, err := mgr.Tail("router", 200); err == nil {
+					msg.alertLogs["router"] = lines
+				}
 			}
 		}
 		_ = tabAt
@@ -866,6 +894,9 @@ func (m *Model) reloadConfig() {
 	m.fitCache = map[string]fitInfo{}
 	m.meta = map[string]metaEntry{}
 	m.fitKey = ""
+	m.alertEngine = alerts.New(alerts.FromConfig(cfg.Alerts))
+	m.alertList = nil
+	m.alertCmd = nil
 	m.ensureFit()
 	_ = presetID
 	m.setToast("config reloaded")

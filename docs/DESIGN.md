@@ -65,6 +65,7 @@ supported. The router itself owns the lifecycle of the models it loads.
 | `internal/measure` | observed-VRAM and benchmark JSONL store, launch capture |
 | `internal/bench` | server and `llama-bench` benchmark runners, summaries, VRAM sampling, A/B comparison |
 | `internal/reqlog` | best-effort `llama-server` request-log parser and bounded row tail |
+| `internal/alerts` | alert rules, per-rule deduplication and optional desktop/webhook notifiers |
 | `internal/sysinfo` | Linux `/proc` + AMD sysfs telemetry and graph history |
 | `internal/doctor` | readiness checks and report rendering |
 | `internal/ui` | ANSI-aware width fitting, panels, bars, sparklines |
@@ -160,6 +161,14 @@ sleep_idle_seconds = -1
 metrics = true
 extra_args = []
 
+[alerts]
+enabled = false              # opt-in
+temp_c = 90                  # 0–150
+vram_percent = 95            # 0–100
+cooldown = "5m"              # per-rule deduplication window
+notify = false               # desktop notification via notify-send
+webhook = ""                 # optional JSON POST URL
+
 [themes.<name>]              # optional custom palette
 base = "tokyo"               # built-in or another custom theme
 [themes.<name>.colors]       # partial override
@@ -220,7 +229,9 @@ After merging:
 
 `config.Validate` rejects structural errors: bad IDs (they become router INI
 sections), an empty model path, a preset referencing an unknown model, bad
-sampling ranges, invalid ports and negative router limits.
+sampling ranges, invalid ports, negative router limits, alert thresholds out
+of range, a non-positive alert cooldown, and webhook URLs that are not HTTP or
+HTTPS.
 
 A missing model file is **not** a load error. It is reported by
 `Config.Warnings()`, `wool doctor` and the TUI as a warning, so a
@@ -421,6 +432,12 @@ are cached too, so a broken model does not cause a stat/read every frame. The
 budget is cached by GPU total/used, reserve and the running server PID, so the
 `fdinfo` scan only runs when one of those changes.
 
+When alerts are enabled, the same background refresh tails the last 200 lines
+of each running instance for the alert engine. The engine runs in `Update` with
+data already gathered, so evaluation never blocks on disk or HTTP.
+Notification delivery is returned as a Bubble Tea command and runs off the UI
+goroutine.
+
 ### Tabs
 
 | Tab | Contents |
@@ -545,6 +562,42 @@ router rows use the child `[port]` prefix and the router model list's
 parser over `-n` tail lines and prints the stable `logsSnapshot` (version 1)
 with `source`, `best_effort`, `recognized` and `rows`; it is rejected with
 `-f`.
+
+### Alerts
+
+`internal/alerts` keeps rule evaluation pure: `Engine.Evaluate` takes one
+observation (GPU temperature and VRAM, instance health and start times, router
+model status and log tails) and returns only alerts that are past their
+cooldown. Deduplication is keyed by `rule|subject`, so a hot GPU and a full GPU
+are tracked separately, as are the server and router. The TUI calls the engine
+from `Update` after the background refresh, keeps the newest 20 alerts and
+renders the newest two at the top of the Status panel.
+
+Rules:
+
+| Rule | Condition |
+| --- | --- |
+| `temperature` | primary GPU temperature at or above `alerts.temp_c` |
+| `vram` | primary GPU VRAM usage at or above `alerts.vram_percent` |
+| `health` | a running instance reports a health status other than `ok`, `loading`, `loading model` or `starting` for 15 seconds after launch |
+| `oom` | the newest tail line matches `out of memory`, `oom` or `failed to allocate` |
+| `model_load` | a router model reports `status.failed` |
+| `restart_loop` | three observed `StartedAt` changes within ten minutes |
+
+The health grace is anchored at the instance start time when it is known, and
+otherwise at the first failed observation. Log rules remember the matching line
+fingerprint and do not re-fire while the same line remains in the tail. A
+disappearing line clears the fingerprint so a later identical event can alert
+again. The engine keeps only in-memory state; restarting the TUI resets it.
+
+Optional delivery is separate from evaluation. `DesktopNotifier` shells out to
+`notify-send` and returns `ErrUnavailable` when the binary is missing;
+`WebhookNotifier` sends one version-1 JSON object per alert with a three-second
+client timeout. Both are ignored on failure: the status bar already has the
+alert. Webhook errors are deliberately generic and never include the URL, so a
+token embedded in it cannot leak into a toast or log line. `wool alerts
+[--json]` runs the same evaluation once, prints the stable `alertsSnapshot`
+(version 1) with `enabled` and `alerts`, and never dispatches notifications.
 
 ### Editor
 
@@ -923,6 +976,7 @@ wool stop [server|router|all]        stop detached servers
 wool status [name] [--json]          show detached server state
 wool stats [MODEL] [options]         live prompt/gen t/s, requests, slots
 wool logs [name] [-n N] [-f] [--json] show a server log, or parsed requests
+wool alerts [--json]                 evaluate alert rules against current state
 wool router [start|stop|status|models|load ID|unload ID|reload|ini]
 wool config path                     print the config path
 wool config init [--force] [PATH]    write a sample config
@@ -965,6 +1019,11 @@ JSON shape is the stable `logsSnapshot` (version 1): `source`, `best_effort`,
 `recognized` and `rows`. It parses the same `-n` tail and cannot be combined
 with `-f`. Without a name it picks the running standalone server, then the
 router. Raw output is unchanged when `--json` is omitted.
+`alerts` evaluates the configured rules once against current hardware, running
+instances, router model status and log tails. It prints `alerts disabled` when
+the section is off and `no alerts` when nothing is active. `--json` prints the
+stable `alertsSnapshot` (version 1) with `enabled` and `alerts`; it never sends
+desktop or webhook notifications.
 
 ## Testing
 
@@ -979,6 +1038,10 @@ router. Raw output is unchanged when `--json` is omitted.
   multiple sizes, including the Inference panel's seeding, counter-reset and
   source-switch behaviour and the Logs tab's structured view, fallback and
   model filter.
+- Alert tests inject a fake clock and a fake notifier. They cover thresholds,
+  cooldown, health grace and recovery, loading states, OOM line
+  deduplication, model-load failure, restart loops, missing `notify-send`, the
+  webhook payload and URL redaction.
 - One view test renders every tab at 120x40, 100x30, 80x24, 60x20 and 40x12
   and asserts that no line exceeds the terminal width.
 - Editor tests write to a temporary config and reload it to verify the TOML
@@ -1030,6 +1093,10 @@ criteria. The limitations below are the current state, not the plan.
   `llama-server` log formats drift, unknown lines are ignored, and a format
   change shows the raw log rather than guessed rows. It keeps the newest 200
   requests in memory only, so history before the current tail is not parsed.
+- Alerts are best effort and opt-in. They evaluate the current poll rather than
+  a persisted history, deduplicate per rule and subject, and reset when the TUI
+  restarts. A missing `notify-send` is ignored, and webhook delivery has a
+  short timeout; neither is a durable notification channel.
 - Benchmarks are single-stream and short by default. They measure one fixed
   prompt, not concurrent load, and prompt length is approximated by repeating a
   sentence rather than tokenizing. Peak VRAM is a sampled system-wide delta and

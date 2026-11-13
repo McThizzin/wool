@@ -3,6 +3,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"regexp"
 	"runtime"
@@ -24,6 +25,7 @@ type Config struct {
 	Models   map[string]ModelConfig      `toml:"models"`
 	Presets  map[string]PresetConfig     `toml:"presets"`
 	Router   RouterConfig                `toml:"router"`
+	Alerts   AlertsConfig                `toml:"alerts"`
 	Themes   map[string]theme.Definition `toml:"themes"`
 }
 
@@ -126,6 +128,17 @@ func (r RouterConfig) MetricsEnabled() bool {
 		return true
 	}
 	return *r.Metrics
+}
+
+// AlertsConfig controls best-effort operating alerts. Zero thresholds fall
+// back to the defaults; validation rejects nonsensical values.
+type AlertsConfig struct {
+	Enabled     bool   `toml:"enabled"`
+	TempC       int    `toml:"temp_c"`
+	VRAMPercent int    `toml:"vram_percent"`
+	Cooldown    string `toml:"cooldown"`
+	Notify      bool   `toml:"notify"`
+	Webhook     string `toml:"webhook"`
 }
 
 // Resolved is a fully merged launch configuration.
@@ -259,6 +272,16 @@ func (c *Config) ApplyDefaults() {
 	if c.Router.SleepIdleSeconds == 0 {
 		c.Router.SleepIdleSeconds = -1
 	}
+
+	if c.Alerts.TempC == 0 {
+		c.Alerts.TempC = 90
+	}
+	if c.Alerts.VRAMPercent == 0 {
+		c.Alerts.VRAMPercent = 95
+	}
+	if c.Alerts.Cooldown == "" {
+		c.Alerts.Cooldown = "5m"
+	}
 }
 
 // Validate checks structural and value errors. Missing model files are
@@ -312,6 +335,21 @@ func (c *Config) Validate() error {
 	}
 	if c.Router.SleepIdleSeconds < -1 {
 		errs = append(errs, fmt.Errorf("router.sleep_idle_seconds must be -1 or greater"))
+	}
+	if c.Alerts.TempC < 0 || c.Alerts.TempC > 150 {
+		errs = append(errs, fmt.Errorf("alerts.temp_c must be between 0 and 150"))
+	}
+	if c.Alerts.VRAMPercent < 0 || c.Alerts.VRAMPercent > 100 {
+		errs = append(errs, fmt.Errorf("alerts.vram_percent must be between 0 and 100"))
+	}
+	if d, err := time.ParseDuration(c.Alerts.Cooldown); err != nil || d <= 0 {
+		errs = append(errs, fmt.Errorf("alerts.cooldown must be a positive duration"))
+	}
+	if c.Alerts.Webhook != "" {
+		u, err := url.Parse(c.Alerts.Webhook)
+		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+			errs = append(errs, fmt.Errorf("alerts.webhook must be an http or https URL"))
+		}
 	}
 	for name := range c.Themes {
 		if err := validateID("themes."+name, name); err != nil {

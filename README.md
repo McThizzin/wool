@@ -25,6 +25,7 @@
 - **Observed vs. estimate.** After a launch, `wool` records used VRAM at 5s and 15s and shows it next to the estimate with a sample count. With at least three matching samples, the dashboard and doctor also show a median correction, clamped to 0.5–2.0; the raw estimate is always kept. Samples expire when the model file, GPU, driver or `llama-server` version changes.
 - **Live inference panel.** The Inference tab shows prompt and generation tokens/s, request counts, slot occupancy and KV-cache fill, and speculative-decoding acceptance, with sparklines, sourced from the server's `/metrics` and `/slots`. It follows the standalone server or the selected router model, and `wool stats [MODEL] [--json]` prints the same numbers for scripts.
 - **Structured request log.** The Logs tab parses the request-completion lines `llama-server` already writes into a best-effort table of timestamp, model, prompt/generated tokens, prompt/generation time, cache hits and status. `v` toggles the raw log, `m` filters by model, and `f` pauses or follows. Unknown formats fall back to the raw log with a note, and `wool logs --json` prints the same rows for scripts.
+- **Configurable alerts.** Opt-in rules warn about high GPU temperature or VRAM, failed health checks, OOM and failed model loads in the log tail, and restart loops. Alerts appear in the Status panel, are deduplicated per rule with a cooldown, and can optionally be sent through `notify-send` or a JSON webhook. `wool alerts [--json]` runs the same check once for scripts.
 - **Hardware telemetry.** CPU, RAM, AMD `amdgpu` VRAM, temperature, power, fan, and sparklines, with no extra daemon required.
 - **Preset and model editing.** Edit resolved launch options in the TUI; changes are written back to TOML with comments and ordering preserved. Changing `ctx`, cache type, `gpu_layers` or `n_cpu_moe` previews the new estimate without saving.
 - **Eight tabs, themes, commands.** Dashboard, Models, Presets, Router, Inference, Hardware, Logs, Bench; built-in and custom themes; slash commands and completion.
@@ -88,6 +89,7 @@ wool stop [server|router|all]        stop detached servers
 wool status [name] [--json]          show detached server state
 wool stats [MODEL] [--json]          live prompt/gen t/s, requests, slots
 wool logs [name] [-n N] [-f] [--json] show a server log, or parsed requests
+wool alerts [--json]                 evaluate alert rules against current state
 wool router [start|stop|status|models|load ID|unload ID|reload|ini]
 wool config path                     print the config path
 wool config init [--force] [PATH]    write a sample config
@@ -261,6 +263,41 @@ wool logs router -n 500 --json # parse more of the tail
 `-n` bounds how many raw log lines are read before parsing (default 100), so
 increase it to capture more history.
 
+## Alerts
+
+Alerts are opt-in. When enabled, the TUI evaluates the rules on every poll and
+shows the newest two in the Status panel; the newest 20 are kept in memory.
+
+```toml
+[alerts]
+enabled = true
+temp_c = 90                  # GPU temperature threshold, 0–150
+vram_percent = 95            # VRAM usage threshold, 0–100
+cooldown = "5m"              # per-rule deduplication window
+notify = true                # desktop notification via notify-send
+webhook = ""                 # optional JSON POST URL
+```
+
+Rules cover GPU temperature, VRAM usage, an unhealthy server or router, OOM or
+“out of memory” lines in the log tail, a failed router model load, and a restart
+loop (three observed starts within ten minutes). Health checks get a 15-second
+grace window after launch, and log rules fingerprint the matching line so a
+stale message does not re-fire. Each `rule|subject` pair is emitted at most once
+per cooldown.
+
+Notifications are best effort. A missing `notify-send` is ignored, and the
+webhook POST has a three-second timeout and runs off the UI goroutine. Webhook
+errors never include the URL, so tokens in it are not logged. The status bar
+always shows the alert even when optional delivery fails.
+
+```sh
+wool alerts           # one-shot text check
+wool alerts --json    # stable alertsSnapshot (version 1)
+```
+
+`wool alerts` does not send notifications. It prints `no alerts` when nothing
+is active and `alerts disabled` when the section is off.
+
 ## Configuration
 
 The default config is `~/.config/wool/config.toml` (XDG-aware). `config.example.toml` is a complete, commented starting point.
@@ -304,6 +341,14 @@ memory_margin_mib = 512
 autoload = false
 sleep_idle_seconds = -1
 metrics = true
+
+[alerts]
+enabled = false              # opt-in
+temp_c = 90
+vram_percent = 95
+cooldown = "5m"
+notify = false               # desktop notification via notify-send
+webhook = ""                 # optional JSON POST URL
 ```
 
 Launch options are inherited in this order:
@@ -427,6 +472,7 @@ internal/fit/      auto-fit solver, fallback ranking and size parsing
 internal/measure/  observed VRAM and benchmark JSONL store, launch capture
 internal/bench/    server and llama-bench runners, summaries, VRAM sampling, A/B comparison
 internal/reqlog/   llama-server request-log parser and bounded row tail
+internal/alerts/   alert rules, deduplication and optional notifiers
 internal/sysinfo/  /proc and AMD sysfs telemetry
 internal/doctor/   readiness checks
 internal/theme/    palettes, styles, icons, custom themes
@@ -447,7 +493,7 @@ go vet ./...
 go test -count=1 ./...
 ```
 
-Tests cover config parsing/merging/editing, effective-config diffs, GGUF metadata and tensor parsing, hybrid KV and MoE expert-offload estimation, dense/hybrid/MoE auto-fit solving and fallback ranking, measurement storage and capture, benchmark history filtering and store rotation, benchmark runners and `llama-bench` parsing, interleaved A/B comparison and its noise warnings, argv and INI generation, router metrics, daemon lifecycle and PID validation, sysinfo parsing, themes, and TUI rendering at multiple terminal sizes. Benchmark tests use a fake HTTP server and temporary state; none require `llama-bench`.
+Tests cover config parsing/merging/editing, effective-config diffs, GGUF metadata and tensor parsing, hybrid KV and MoE expert-offload estimation, dense/hybrid/MoE auto-fit solving and fallback ranking, measurement storage and capture, benchmark history filtering and store rotation, benchmark runners and `llama-bench` parsing, interleaved A/B comparison and its noise warnings, argv and INI generation, router metrics, alert thresholds, cooldowns, log fingerprints and notifier behaviour, daemon lifecycle and PID validation, sysinfo parsing, themes, and TUI rendering at multiple terminal sizes. Benchmark tests use a fake HTTP server and temporary state; alert tests use a fake notifier and an injected clock, and none require `notify-send` or the network.
 
 ## Limitations
 
@@ -462,5 +508,6 @@ Tests cover config parsing/merging/editing, effective-config diffs, GGUF metadat
 - Benchmarks are single-stream and short by default. They measure one fixed prompt rather than concurrent load, and prompt length is approximated by repeating a sentence instead of tokenizing.
 - A/B comparison warns when spread is above 10%, but that is a coarse guard, not a significance test. Small deltas on a shared machine can still be noise; use more rounds before trusting them.
 - The measurement store is bounded at 5000 records. The oldest runs are dropped without warning; export anything you need to keep with `wool bench history --json`.
+- Alerts are best effort and opt-in. They sample the current poll rather than a long history, deduplicate per rule and subject, and do not persist across TUI restarts. A missing `notify-send` is ignored, and webhook delivery has a short timeout; neither is a durable notification channel.
 
 See [`docs/DESIGN.md`](docs/DESIGN.md) for the full design, lifecycle, and config reference, and [`docs/roadmap.md`](docs/roadmap.md) for what is planned and in what order.

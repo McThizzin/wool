@@ -191,6 +191,65 @@ model = "a"
 	}
 }
 
+func TestAlertsDefaultsAndValidation(t *testing.T) {
+	cfg, err := Parse([]byte(`
+[models.a]
+path = "a.gguf"
+`), "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Alerts.Enabled {
+		t.Fatal("alerts must default to disabled")
+	}
+	if cfg.Alerts.TempC != 90 || cfg.Alerts.VRAMPercent != 95 || cfg.Alerts.Cooldown != "5m" {
+		t.Fatalf("alerts defaults = %+v", cfg.Alerts)
+	}
+
+	cfg, err = Parse([]byte(`
+[alerts]
+enabled = true
+temp_c = 80
+vram_percent = 90
+cooldown = "2m"
+notify = true
+webhook = "https://example.test/hook"
+[models.a]
+path = "a.gguf"
+`), "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.Alerts.Enabled || cfg.Alerts.TempC != 80 || cfg.Alerts.VRAMPercent != 90 ||
+		cfg.Alerts.Cooldown != "2m" || !cfg.Alerts.Notify || cfg.Alerts.Webhook == "" {
+		t.Fatalf("alerts = %+v", cfg.Alerts)
+	}
+
+	bad := []string{
+		`[alerts]
+temp_c = 151`,
+		`[alerts]
+temp_c = -1`,
+		`[alerts]
+vram_percent = 101`,
+		`[alerts]
+vram_percent = -1`,
+		`[alerts]
+cooldown = "soon"`,
+		`[alerts]
+cooldown = "0s"`,
+		`[alerts]
+webhook = "ftp://example.test/hook"`,
+		`[alerts]
+webhook = "not a url"`,
+	}
+	for _, body := range bad {
+		if _, err := Parse([]byte(body+"\n[models.a]\npath = \"a.gguf\"\n"), "test"); err == nil {
+			t.Fatalf("expected invalid alerts config to fail: %s", body)
+		}
+	}
+}
+
 func TestSmokeDefaultsAndValidation(t *testing.T) {
 	cfg, err := Parse([]byte(`
 [models.a]

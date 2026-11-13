@@ -8,6 +8,7 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 
+	"wool/internal/alerts"
 	"wool/internal/config"
 	"wool/internal/gguf"
 	"wool/internal/llamaserver"
@@ -998,6 +999,24 @@ func (m *Model) sidebarView(w, h, topH int) string {
 func (m *Model) statusBody(w int) []string {
 	st := m.render.Styles
 	var lines []string
+	if len(m.alertList) > 0 {
+		lines = append(lines, st.Header.Render("ALERTS"))
+		start := len(m.alertList) - 2
+		if start < 0 {
+			start = 0
+		}
+		for _, a := range m.alertList[start:] {
+			style := st.Warn
+			if a.Severity == alerts.SeverityCritical {
+				style = st.Bad
+			}
+			lines = append(lines, style.Render(ui.Fit(a.Rule+" · "+a.Message, w)))
+		}
+		if more := len(m.alertList) - 2; more > 0 {
+			lines = append(lines, st.Muted.Render(fmt.Sprintf("%d older alert(s)", more)))
+		}
+		lines = append(lines, "")
+	}
 	lines = append(lines, st.Header.Render("SERVER"))
 	if m.hasServer {
 		lines = append(lines, st.Good.Render("running")+"  "+st.Muted.Render(m.server.URL()))
