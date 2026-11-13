@@ -23,6 +23,8 @@ profile.cov
 /data/
 /logs/
 *.log
+# llama-server log fixtures are source, not runtime data.
+!internal/reqlog/testdata/*.log
 
 # Go workspace files (local development only)
 go.work

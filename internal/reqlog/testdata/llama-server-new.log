@@ -1,0 +1,17 @@
+[ 8081] 0.19.798.375 I srv llama_server: model loaded
+[ 8081] 0.47.733.803 I slot get_availabl: id 3 | task -1 | selected slot by LRU, t_last = -1
+[ 8081] 0.47.734.933 I slot launch_slot_: id 3 | task 8 | processing task, is_child = 0
+[ 8081] 0.59.256.296 I slot update_slots: id 3 | task 8 | new prompt, n_ctx_slot = 25088, n_keep = 0, task.n_tokens = 7235
+[ 8081] 0.59.256.400 I slot update_slots: id 3 | task 8 | prompt processing progress, n_tokens = 2048, batch.n_tokens = 2048, progress = 0.28
+[ 8081] 1.03.020.501 I slot update_slots: id 3 | task 8 | prompt done, n_tokens = 7235, batch.n_tokens = 512
+[ 8081] 1.03.021.000 I slot print_timing: id 3 | task 8 | n_gen =   5578, tg =   6.10 t/s, tg_3s =   0.11 t/s
+[ 8081] 1.03.021.100 I slot print_timing: id 3 | task 8 |  prompt eval time =    383.98 ms /   513 tokens (    0.75 ms per token,  1336.00 tokens per second)
+[ 8081] 1.03.021.200 I  eval time =    427.18 ms /    35 tokens (   12.21 ms per token,    81.93 tokens per second)
+[ 8081] 1.03.021.300 I  total time =    811.16 ms /   548 tokens
+[ 8081] 1.03.021.400 I slot release: id 3 | task 8 | stop processing: n_tokens = 7269, truncated = 0
+[ 8081] 1.03.021.500 I srv log_server_r: done request: POST /v1/chat/completions 127.0.0.1 200
+[ 8082] 1.04.000.000 I slot update_slots: id 1 | task 9 | new prompt, n_ctx_slot = 8192, n_keep = 0, task.n_tokens = 120
+[ 8082] 1.05.000.000 I slot update_slots: id 1 | task 9 | prompt done, n_tokens = 120, batch.n_tokens = 120
+[ 8082] 1.06.000.000 I slot print_timing: id 1 | task 9 |  prompt eval time =     20.00 ms /   120 tokens (    0.17 ms per token,  6000.00 tokens per second)
+[ 8082] 1.06.000.100 I  eval time =     10.00 ms /     0 tokens (    0.00 ms per token,     0.00 tokens per second)
+[ 8082] 1.06.000.200 I  total time =     30.00 ms /   120 tokens
