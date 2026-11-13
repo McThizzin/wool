@@ -980,3 +980,48 @@ func TestCmdAlertsUsage(t *testing.T) {
 		t.Fatalf("exit = %d, stdout = %q, stderr = %q", code, out, errs)
 	}
 }
+
+func TestCmdRestartRecordedServer(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	mgr := daemon.NewManager()
+	first, err := mgr.Start(daemon.Spec{
+		Name: "server", Kind: daemon.KindServer, Bin: "/bin/sh",
+		Host: "127.0.0.1",
+		Args: func(int) []string { return []string{"-c", "sleep 30"} },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mgr.Stop("server", time.Second)
+
+	out, errs, code := captureOutput(t, func() int { return cmdRestart("", []string{"--no-wait"}) })
+	if code != 0 {
+		t.Fatalf("exit = %d, stderr = %s", code, errs)
+	}
+	if !strings.Contains(out, "restarted") {
+		t.Fatalf("output = %q", out)
+	}
+	inst, err := mgr.Status("server")
+	if err != nil || !inst.Alive {
+		t.Fatalf("status = %+v, %v", inst, err)
+	}
+	if inst.PID == first.PID {
+		t.Fatal("restart reused the old process")
+	}
+}
+
+func TestCmdRestartWithoutRecordedState(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	_, errs, code := captureOutput(t, func() int { return cmdRestart("", []string{"--no-wait"}) })
+	if code != 1 || !strings.Contains(errs, "no recorded launch") {
+		t.Fatalf("exit = %d, stderr = %q", code, errs)
+	}
+}
+
+func TestCmdRestartUsage(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	_, errs, code := captureOutput(t, func() int { return cmdRestart("", []string{"bogus", "extra"}) })
+	if code != 2 || !strings.Contains(errs, "usage: wool restart") {
+		t.Fatalf("exit = %d, stderr = %q", code, errs)
+	}
+}

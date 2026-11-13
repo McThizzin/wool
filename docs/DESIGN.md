@@ -116,6 +116,10 @@ startup_timeout = "120s"
 poll_interval = "1s"         # TUI refresh; clamped to 250ms..1m
 smoke_test = false           # send one tiny prompt after health
 smoke_timeout = "30s"        # bounds the whole smoke request
+restart = "never"            # never | on-failure | always; active policies retry unexpected deaths
+restart_max = 3              # attempts inside restart_window; 0 disables
+restart_window = "10m"       # sliding window for attempt counting
+restart_backoff = "2s"       # first delay; doubles per attempt, capped at 1m
 
 [defaults]                   # shared launch options
 ctx = 32768
@@ -322,6 +326,28 @@ log does not stall the TUI.
 `status` and `logs` work from any directory because they only need the XDG
 state directory. `status --json` exposes the full state, including argv.
 
+## Crash detection and restart
+
+The TUI compares each poll with the previous one. A state file that is present
+but whose process is gone means the server died without going through wool.
+`daemon.Manager.Stop` removes the state file, so a clean TUI or CLI stop is not
+a crash; intentional restarts also set an `expectStop` guard for the interval
+between the stop and the new launch.
+
+`daemon.ClassifyCrash` scans only the newest launch header in the log and
+applies precedence OOM > port > model > signal > unknown. The crash card shows
+the reason, time, policy status and up to four relevant lines. `S` or
+`/restart` relaunches the recorded argv; `x` or `/dismiss` hides the card,
+cancels a pending automatic retry and keeps the state for `wool restart`.
+
+In-session restart is opt-in with `[server] restart`. `restart_max` counts
+attempts inside `restart_window`; an explicit `0` disables automatic attempts.
+`restart_backoff` doubles per attempt and is capped at one minute. Successful
+automatic attempts do not reset the window, so a crash loop is bounded; manual
+starts, stops and restarts reset it. Dismissing a crash card also cancels its
+pending retry. Router-managed model children are not supervised here because
+`llama-server` owns them.
+
 ## Router mode
 
 ### Generated models.ini
@@ -460,8 +486,8 @@ goroutine.
 | `j` / `k`, arrows | move selection or scroll logs |
 | `g` / `G` | first / last entry; in logs, tail or follow |
 | `enter` | start selected target, load selected router model, or switch log target |
-| `s` / `x` | start / stop the standalone server |
-| `S` | restart the selected target |
+| `s` / `x` | start / stop the standalone server (x dismisses a crash card) |
+| `S` | restart the selected target or the crashed server |
 | `r` / `R` | start / stop the router |
 | `l` / `u` | load / unload the selected router model |
 | `i` | focus the Inference panel |
@@ -488,7 +514,8 @@ completion for command names and model/preset IDs.
 
 ```text
 /start [name]           start a preset or model (selected target if omitted)
-/restart                restart the selected target
+/restart                restart the selected target or the crashed server
+/dismiss                hide a crash card and cancel its pending retry
 /stop [server|router|all]
 /router [start|stop|reload|models]
 /load ID                load a router model
@@ -972,6 +999,7 @@ wool bench history [TARGET]          show recorded benchmark runs
 wool bench compare A B [options]     interleaved A/B benchmark comparison
 wool list [--json]                   list models and presets
 wool run TARGET [options]            start a model or preset detached
+wool restart [server|router] [--no-wait]  relaunch the recorded instance
 wool stop [server|router|all]        stop detached servers
 wool status [name] [--json]          show detached server state
 wool stats [MODEL] [options]         live prompt/gen t/s, requests, slots
@@ -1086,7 +1114,8 @@ criteria. The limitations below are the current state, not the plan.
   recommends an over-budget configuration. Saving a preset is explicit and
   updates only the fit-controlled keys; applying a recommendation to an
   existing target remains a separate draft edit.
-- There is no automatic restart/supervision of the standalone server in v1.
+- In-session crash restart is opt-in and only runs while a wool process is
+  attached. There is no detached supervisor in v1; use systemd for a service.
   Router-managed models are supervised by `llama-server` itself.
 - Logs are tailed from disk on a timer rather than streamed; this is simple
   and works across reattachments. The structured request table is best effort:

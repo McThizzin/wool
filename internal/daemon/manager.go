@@ -32,6 +32,29 @@ type Spec struct {
 	Args     func(port int) []string
 }
 
+// SpecFromState rebuilds a launch spec from a recorded instance. It is used by
+// manual restarts, where the recorded argv is the source of truth even if the
+// config has changed since the server was started.
+func SpecFromState(s State) Spec {
+	host := s.Host
+	if host == "" {
+		host = "127.0.0.1"
+	}
+	args := append([]string(nil), s.Args...)
+	return Spec{
+		Name:   s.Name,
+		Kind:   s.Kind,
+		Preset: s.Preset,
+		Model:  s.Model,
+		Bin:    s.Bin,
+		Host:   host,
+		Port:   s.Port,
+		Args: func(int) []string {
+			return append([]string(nil), args...)
+		},
+	}
+}
+
 // Manager owns state files and detached processes.
 type Manager struct {
 	StateDir string

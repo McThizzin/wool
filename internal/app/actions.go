@@ -35,6 +35,7 @@ func (m *Model) startTarget(id, kind string) tea.Cmd {
 		return nil
 	}
 	m.busy = "starting " + id + "..."
+	m.resetRestartState()
 	label := id
 	preset := ""
 	if kind == "preset" {
@@ -160,12 +161,16 @@ func (m *Model) captureMeasurement(job *measureJob) tea.Cmd {
 func (m *Model) stopServer() tea.Cmd {
 	mgr := m.mgr
 	m.busy = "stopping server..."
+	m.expectStop = true
+	m.expectServer = false
+	m.resetRestartState()
+	m.clearCrash()
 	return func() tea.Msg {
 		err := mgr.Stop("server", 20*time.Second)
 		if errors.Is(err, daemon.ErrNotRunning) {
-			return actionMsg{label: "server was not running"}
+			return actionMsg{label: "server was not running", stopped: true}
 		}
-		return actionMsg{label: "server stopped", err: err}
+		return actionMsg{label: "server stopped", err: err, stopped: err == nil}
 	}
 }
 
@@ -192,6 +197,9 @@ func (m *Model) restartServer() tea.Cmd {
 	label := id
 	job := m.newMeasureJob(r, "server", config.ExpandPath(cfg.App.LlamaServer))
 	m.busy = "restarting " + id + "..."
+	m.expectStop = true
+	m.resetRestartState()
+	m.clearCrash()
 	return func() tea.Msg {
 		_ = mgr.Stop("server", 20*time.Second)
 		var baseline uint64
@@ -376,8 +384,8 @@ func (m *Model) showHelp() {
 		"  j/k, up/down           move selection",
 		"  g/G                    first / last entry",
 		"  enter                  start selected server, load router model or compare bench runs",
-		"  s / x                  start / stop the standalone server",
-		"  S                      restart the selected preset or model",
+		"  s / x                  start / stop the standalone server (x dismisses a crash card)",
+		"  S                      restart the selected preset, model or crashed server",
 		"  r / R                  start / stop the router",
 		"  l / u                  load / unload the selected router model",
 		"  i                      focus the inference tab",
@@ -399,7 +407,8 @@ func (m *Model) showHelp() {
 		"",
 		"commands",
 		"  /start [name]          start a preset or model",
-		"  /restart [name]        restart with the selected target",
+		"  /restart [name]        restart with the selected target or the crashed server",
+		"  /dismiss               hide a crash card and cancel its pending retry",
 		"  /stop [server|router|all]",
 		"  /router [start|stop|reload|models]",
 		"  /load ID               ask the router to load a model",
@@ -447,7 +456,13 @@ func (m *Model) runCommand(line string) (tea.Cmd, bool) {
 		}
 		m.setToast("no preset or model named " + args[0])
 	case "restart":
+		if m.crash != nil {
+			return m.restartCrashed(), true
+		}
 		return m.restartServer(), true
+	case "dismiss":
+		m.dismissCrash()
+		return nil, true
 	case "stop":
 		target := "server"
 		if len(args) > 0 {

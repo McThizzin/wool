@@ -9,7 +9,7 @@ import (
 )
 
 var commandNames = []string{
-	"start", "restart", "stop", "router", "load", "unload", "reload",
+	"start", "restart", "stop", "dismiss", "router", "load", "unload", "reload",
 	"edit", "fit", "doctor", "theme", "tab", "bench", "logs", "help", "quit",
 }
 
@@ -98,8 +98,15 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		m.setToast("nothing selected")
 	case "x":
+		if m.crash != nil {
+			m.dismissCrash()
+			return m, nil
+		}
 		return m, m.stopServer()
 	case "S":
+		if m.crash != nil {
+			return m, m.restartCrashed()
+		}
 		return m, m.restartServer()
 	case "r":
 		return m, m.startRouter()
@@ -307,6 +314,8 @@ func (m *Model) modelCandidates(cmd string) []string {
 	case "start", "restart":
 		out := append([]string{}, m.presets...)
 		return append(out, m.models...)
+	case "dismiss":
+		return nil
 	case "load", "unload":
 		var out []string
 		for _, rm := range m.routerModels {

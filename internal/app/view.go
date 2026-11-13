@@ -150,6 +150,9 @@ func (m *Model) mainPanel(w, h int) string {
 
 func (m *Model) dashRight() string {
 	st := m.render.Styles
+	if m.crash != nil {
+		return st.Bad.Render("server crashed")
+	}
 	if m.hasServer {
 		return st.Good.Render("server up")
 	}
@@ -460,6 +463,10 @@ func (m *Model) dashboardBody(w, h int) []string {
 		}
 	}
 	lines = append(lines, "")
+	if card := m.crashCard(w); len(card) > 0 {
+		lines = append(lines, card...)
+		lines = append(lines, "")
+	}
 	lines = append(lines, st.Header.Render("log tail"))
 	logLines := m.logLines
 	if len(logLines) == 0 {
@@ -1027,6 +1034,8 @@ func (m *Model) statusBody(w int) []string {
 		}
 		lines = append(lines, "target "+fallback(what, "unknown"))
 		lines = append(lines, st.Muted.Render("health "+fallback(m.serverHealth, "unknown")))
+	} else if m.crash != nil {
+		lines = append(lines, m.crashSidebar()...)
 	} else {
 		lines = append(lines, st.Muted.Render("not running"))
 		lines = append(lines, st.Muted.Render("s start · S restart"))
@@ -1123,7 +1132,11 @@ func (m *Model) footerView() string {
 	} else if m.tab == tabLogs {
 		hints = "j/k scroll · f follow · v raw/structured · m filter · enter target · ? help · q quit"
 	} else {
-		hints = "tab switch · j/k move · enter start · x stop · r router · d doctor · D diff · / command · ? help · q quit"
+		if m.crash != nil {
+			hints = "S restart · x dismiss · tab switch · j/k move · / command · ? help · q quit"
+		} else {
+			hints = "tab switch · j/k move · enter start · x stop · r router · d doctor · D diff · / command · ? help · q quit"
+		}
 	}
 	left := st.Muted.Render(" " + hints)
 	size := st.Muted.Render(fmt.Sprintf("%dx%d ", m.width, m.height))

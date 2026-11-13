@@ -50,6 +50,7 @@ Usage:
   wool bench compare A B [options]     interleaved A/B benchmark comparison
   wool list [--json]                   list models and presets
   wool run TARGET [options]            start a model or preset detached
+  wool restart [server|router] [--no-wait]  relaunch the recorded instance
   wool stop [server|router|all]        stop detached servers
   wool status [name] [--json]          show detached server state
   wool stats [MODEL] [options]         live inference rates from the running server
@@ -133,6 +134,8 @@ func run(args []string) int {
 		return cmdList(cfgPath, rest)
 	case "run", "start":
 		return cmdRun(cfgPath, rest)
+	case "restart":
+		return cmdRestart(cfgPath, rest)
 	case "stop":
 		return cmdStop(cfgPath, rest)
 	case "status":
@@ -2362,11 +2365,15 @@ func durationOr(s string, fallback time.Duration) time.Duration {
 }
 
 func printServer(state daemon.State, preset string) {
+	printServerVerb(state, preset, "started")
+}
+
+func printServerVerb(state daemon.State, preset, verb string) {
 	label := state.Model
 	if preset != "" {
 		label = preset
 	}
-	fmt.Printf("%s started\n", label)
+	fmt.Printf("%s %s\n", label, verb)
 	fmt.Printf("  url   %s\n", state.URL())
 	fmt.Printf("  pid   %d\n", state.PID)
 	fmt.Printf("  port  %d\n", state.Port)
@@ -2380,6 +2387,71 @@ func printLogTail(mgr *daemon.Manager, name string, n int) {
 		return
 	}
 	fmt.Fprintf(os.Stderr, "\nlast %d log lines (%s):\n%s\n", len(lines), mgr.LogDir, strings.Join(lines, "\n"))
+}
+
+// cmdRestart relaunches the instance recorded in the state directory. The
+// recorded argv is reused verbatim so a restart does not silently pick up
+// config changes or a different port.
+func cmdRestart(cfgPath string, args []string) int {
+	fs := flag.NewFlagSet("restart", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	noWait := fs.Bool("no-wait", false, "do not wait for /health")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	if fs.NArg() > 1 {
+		fmt.Fprintln(os.Stderr, "usage: wool restart [server|router] [--no-wait]")
+		return 2
+	}
+	name := "server"
+	if fs.NArg() == 1 {
+		name = fs.Arg(0)
+	}
+	if name != "server" && name != "router" {
+		fmt.Fprintf(os.Stderr, "wool: unknown target %q (want server or router)\n", name)
+		return 2
+	}
+
+	mgr := daemon.NewManager()
+	inst, err := mgr.Status(name)
+	if err != nil {
+		if errors.Is(err, daemon.ErrNotRunning) {
+			fmt.Fprintf(os.Stderr, "wool: %s has no recorded launch; use `wool run TARGET`\n", name)
+			return 1
+		}
+		fmt.Fprintf(os.Stderr, "wool: %v\n", err)
+		return 1
+	}
+	if inst.Alive {
+		timeout := 20 * time.Second
+		if name == "router" {
+			timeout = 30 * time.Second
+		}
+		if err := mgr.Stop(name, timeout); err != nil {
+			fmt.Fprintf(os.Stderr, "wool: restart: %v\n", err)
+			return 1
+		}
+	}
+
+	state, err := mgr.Start(daemon.SpecFromState(inst.State))
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "wool: %v\n", err)
+		return 1
+	}
+	if !*noWait {
+		cfg, _ := loadConfig(cfgPath)
+		if cfg == nil {
+			cfg = &config.Config{}
+		}
+		if err := waitReady(state, cfg); err != nil {
+			fmt.Fprintf(os.Stderr, "wool: %v\n", err)
+			printLogTail(mgr, state.Name, 40)
+			_ = mgr.Stop(state.Name, 10*time.Second)
+			return 1
+		}
+	}
+	printServerVerb(state, inst.Preset, "restarted")
+	return 0
 }
 
 func cmdStop(cfgPath string, args []string) int {

@@ -26,6 +26,7 @@
 - **Live inference panel.** The Inference tab shows prompt and generation tokens/s, request counts, slot occupancy and KV-cache fill, and speculative-decoding acceptance, with sparklines, sourced from the server's `/metrics` and `/slots`. It follows the standalone server or the selected router model, and `wool stats [MODEL] [--json]` prints the same numbers for scripts.
 - **Structured request log.** The Logs tab parses the request-completion lines `llama-server` already writes into a best-effort table of timestamp, model, prompt/generated tokens, prompt/generation time, cache hits and status. `v` toggles the raw log, `m` filters by model, and `f` pauses or follows. Unknown formats fall back to the raw log with a note, and `wool logs --json` prints the same rows for scripts.
 - **Configurable alerts.** Opt-in rules warn about high GPU temperature or VRAM, failed health checks, OOM and failed model loads in the log tail, and restart loops. Alerts appear in the Status panel, are deduplicated per rule with a cooldown, and can optionally be sent through `notify-send` or a JSON webhook. `wool alerts [--json]` runs the same check once for scripts.
+- **Crash detection and restart.** If a recorded server dies while wool is attached, the dashboard shows a crash card with the inferred reason (OOM, port conflict, model-load failure, signal or unknown) and the relevant log lines. `S` or `wool restart` relaunches the recorded argv, and an opt-in `[server] restart` policy can retry automatically with exponential backoff, a sliding attempt window and a cap. A clean `wool stop` never triggers a restart.
 - **Hardware telemetry.** CPU, RAM, AMD `amdgpu` VRAM, temperature, power, fan, and sparklines, with no extra daemon required.
 - **Preset and model editing.** Edit resolved launch options in the TUI; changes are written back to TOML with comments and ordering preserved. Changing `ctx`, cache type, `gpu_layers` or `n_cpu_moe` previews the new estimate without saving.
 - **Eight tabs, themes, commands.** Dashboard, Models, Presets, Router, Inference, Hardware, Logs, Bench; built-in and custom themes; slash commands and completion.
@@ -85,6 +86,7 @@ wool bench history [TARGET]          show recorded benchmark runs
 wool bench compare A B [options]     interleaved A/B benchmark comparison
 wool list [--json]                   list models and presets
 wool run TARGET [options]            start a model or preset detached
+wool restart [server|router] [--no-wait]  relaunch the recorded instance
 wool stop [server|router|all]        stop detached servers
 wool status [name] [--json]          show detached server state
 wool stats [MODEL] [--json]          live prompt/gen t/s, requests, slots
@@ -318,6 +320,10 @@ startup_timeout = "120s"
 poll_interval = "5s"         # TUI refresh; clamped to 250ms..1m
 smoke_test = false           # send one tiny prompt after health
 smoke_timeout = "30s"        # bounds the whole smoke request
+restart = "never"            # never | on-failure | always; active policies retry unexpected deaths
+restart_max = 3              # attempts inside restart_window; 0 disables
+restart_window = "10m"
+restart_backoff = "2s"       # doubles per attempt, capped at 1m
 
 [defaults]
 gpu_layers = 999
@@ -389,8 +395,8 @@ Supported color keys: `border`, `accent`, `text`, `dim`, `badge_fg`, `red`, `yel
 | `j` / `k`, arrows | move selection or scroll logs |
 | `g` / `G` | first / last entry; in logs, tail or follow |
 | `enter` | start target, load router model, switch log target, or compare bench runs |
-| `s` / `x` | start / stop the standalone server |
-| `S` | restart the selected target |
+| `s` / `x` | start / stop the standalone server (x dismisses a crash card) |
+| `S` | restart the selected target or the crashed server |
 | `r` / `R` | start / stop the router |
 | `l` / `u` | load / unload the selected router model |
 | `i` | focus the Inference panel |
@@ -411,7 +417,7 @@ Supported color keys: `border`, `accent`, `text`, `dim`, `badge_fg`, `red`, `yel
 | `?` | help overlay |
 | `q` / `ctrl+c` | quit without stopping servers |
 
-Slash commands include `/start`, `/restart`, `/stop`, `/router`, `/load`, `/unload`, `/reload`, `/edit`, `/fit`, `/doctor`, `/theme`, `/tab`, `/bench`, `/logs`, `/help`, and `/quit`.
+Slash commands include `/start`, `/restart`, `/stop`, `/dismiss`, `/router`, `/load`, `/unload`, `/reload`, `/edit`, `/fit`, `/doctor`, `/theme`, `/tab`, `/bench`, `/logs`, `/help`, and `/quit`.
 
 ## Router mode
 
@@ -493,14 +499,14 @@ go vet ./...
 go test -count=1 ./...
 ```
 
-Tests cover config parsing/merging/editing, effective-config diffs, GGUF metadata and tensor parsing, hybrid KV and MoE expert-offload estimation, dense/hybrid/MoE auto-fit solving and fallback ranking, measurement storage and capture, benchmark history filtering and store rotation, benchmark runners and `llama-bench` parsing, interleaved A/B comparison and its noise warnings, argv and INI generation, router metrics, alert thresholds, cooldowns, log fingerprints and notifier behaviour, daemon lifecycle and PID validation, sysinfo parsing, themes, and TUI rendering at multiple terminal sizes. Benchmark tests use a fake HTTP server and temporary state; alert tests use a fake notifier and an injected clock, and none require `notify-send` or the network.
+Tests cover config parsing/merging/editing, effective-config diffs, GGUF metadata and tensor parsing, hybrid KV and MoE expert-offload estimation, dense/hybrid/MoE auto-fit solving and fallback ranking, measurement storage and capture, benchmark history filtering and store rotation, benchmark runners and `llama-bench` parsing, interleaved A/B comparison and its noise warnings, argv and INI generation, router metrics, alert thresholds, cooldowns, log fingerprints and notifier behaviour, crash classification, restart backoff/window handling, daemon lifecycle and PID validation, sysinfo parsing, themes, and TUI rendering at multiple terminal sizes. Benchmark tests use a fake HTTP server and temporary state; alert tests use a fake notifier and an injected clock; restart tests use short-lived `/bin/sh` children, and none require `notify-send` or the network.
 
 ## Limitations
 
 - Only AMD sysfs telemetry is implemented; NVIDIA/Intel need new backends.
 - One standalone server and one router are managed per state directory.
 - The editor can reset launch-option overrides, but not `model`, `path`, `alias` or `extra` keys.
-- Standalone servers are not automatically restarted; router-managed models are supervised by `llama-server` itself.
+- Standalone servers are restarted only while a wool process is attached; there is no detached supervisor. The default policy is `never`, so automatic restarts are opt-in. Router-managed models are supervised by `llama-server` itself.
 - VRAM estimates fall back to a file-size approximation, and say so, when tensor metadata, a quantisation type or a tensor name is unsupported, or when a sliding-window layer pattern is unknown. Speculative decoding buffers are not modelled.
 - `wool fit` is advisory and inherits the estimator's approximation. It never recommends an over-budget configuration, but the recommendation is a starting point with headroom, not a guarantee.
 - `wool fit --save-preset` and the editor's `p` action write a preset from the fit-controlled values only. Replacing an existing preset updates those keys and leaves its other options and comments alone; there is no preset-diff preview before writing.

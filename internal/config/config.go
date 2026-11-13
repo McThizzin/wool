@@ -45,6 +45,10 @@ type ServerConfig struct {
 	PollInterval   string `toml:"poll_interval"`
 	SmokeTest      bool   `toml:"smoke_test"`
 	SmokeTimeout   string `toml:"smoke_timeout"`
+	Restart        string `toml:"restart"`
+	RestartMax     *int   `toml:"restart_max,omitempty"`
+	RestartWindow  string `toml:"restart_window"`
+	RestartBackoff string `toml:"restart_backoff"`
 }
 
 // AutoPortEnabled defaults to true when auto_port is omitted.
@@ -53,6 +57,36 @@ func (s ServerConfig) AutoPortEnabled() bool {
 		return true
 	}
 	return *s.AutoPort
+}
+
+// RestartEnabled reports whether in-session crash restarts are allowed.
+func (s ServerConfig) RestartEnabled() bool {
+	return s.Restart == "on-failure" || s.Restart == "always"
+}
+
+// RestartMaxAttempts defaults to three when restart_max is omitted. An
+// explicit zero disables automatic restarts without changing the policy.
+func (s ServerConfig) RestartMaxAttempts() int {
+	if s.RestartMax == nil {
+		return 3
+	}
+	return *s.RestartMax
+}
+
+// RestartWindowDuration is the sliding window used to count attempts.
+func (s ServerConfig) RestartWindowDuration() time.Duration {
+	if d, err := time.ParseDuration(s.RestartWindow); err == nil && d > 0 {
+		return d
+	}
+	return 10 * time.Minute
+}
+
+// RestartBackoffDuration is the delay before the first automatic restart.
+func (s ServerConfig) RestartBackoffDuration() time.Duration {
+	if d, err := time.ParseDuration(s.RestartBackoff); err == nil && d > 0 {
+		return d
+	}
+	return 2 * time.Second
 }
 
 // Options is a layer of launch options. Pointer fields mean "not set at this
@@ -256,6 +290,15 @@ func (c *Config) ApplyDefaults() {
 	if c.Server.SmokeTimeout == "" {
 		c.Server.SmokeTimeout = "30s"
 	}
+	if c.Server.Restart == "" {
+		c.Server.Restart = "never"
+	}
+	if c.Server.RestartWindow == "" {
+		c.Server.RestartWindow = "10m"
+	}
+	if c.Server.RestartBackoff == "" {
+		c.Server.RestartBackoff = "2s"
+	}
 	if c.Models == nil {
 		c.Models = map[string]ModelConfig{}
 	}
@@ -293,6 +336,20 @@ func (c *Config) Validate() error {
 	}
 	if d, err := time.ParseDuration(c.Server.SmokeTimeout); err != nil || d <= 0 {
 		errs = append(errs, fmt.Errorf("server.smoke_timeout must be a positive duration"))
+	}
+	switch c.Server.Restart {
+	case "never", "on-failure", "always":
+	default:
+		errs = append(errs, fmt.Errorf("server.restart must be never, on-failure or always"))
+	}
+	if c.Server.RestartMax != nil && *c.Server.RestartMax < 0 {
+		errs = append(errs, fmt.Errorf("server.restart_max cannot be negative"))
+	}
+	if d, err := time.ParseDuration(c.Server.RestartWindow); err != nil || d <= 0 {
+		errs = append(errs, fmt.Errorf("server.restart_window must be a positive duration"))
+	}
+	if d, err := time.ParseDuration(c.Server.RestartBackoff); err != nil || d <= 0 {
+		errs = append(errs, fmt.Errorf("server.restart_backoff must be a positive duration"))
 	}
 	if err := validateSampling("defaults.sampling", applySampling(DefaultSampling(), c.Defaults.Sampling)); err != nil {
 		errs = append(errs, err)

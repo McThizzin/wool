@@ -140,6 +140,13 @@ type Model struct {
 	toastAt  time.Time
 	actionAt time.Time
 
+	crash        *daemon.Crash
+	crashState   daemon.State
+	restartAt    time.Time
+	restartHist  []time.Time
+	expectServer bool
+	expectStop   bool
+
 	themeName string
 	helpOpen  bool
 
@@ -190,6 +197,7 @@ type tickMsg struct {
 	srvStats     llamaserver.Metrics
 	srvSlots     []llamaserver.Slot
 	srvStatsErr  string
+	serverLog    []string
 	alertLogs    map[string][]string
 }
 
@@ -199,6 +207,8 @@ type actionMsg struct {
 	state   daemon.State
 	hasSt   bool
 	router  bool
+	stopped bool
+	auto    bool
 	measure *measureJob
 }
 
@@ -326,6 +336,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tickMsg:
 		m.applyTick(msg)
 		cmd := m.refreshLater(m.pollInterval())
+		if auto := m.autoRestartCmd(); auto != nil {
+			cmd = tea.Batch(cmd, auto)
+		}
 		if m.alertCmd != nil {
 			cmd = tea.Batch(cmd, m.alertCmd)
 			m.alertCmd = nil
@@ -335,14 +348,34 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.busy = ""
 		m.actionAt = time.Now()
 		if msg.err != nil {
+			m.expectStop = false
+			m.expectServer = false
 			m.setToast("error: " + oneLine(msg.err.Error(), 120))
+			if msg.auto {
+				m.scheduleRestart(time.Now())
+			}
 		} else {
 			m.setToast(msg.label)
-			if msg.hasSt && !msg.router {
-				m.logSel, m.logName = 0, "server"
-			}
-			if msg.hasSt && msg.router {
+			m.expectStop = false
+			switch {
+			case msg.stopped:
+				m.server, m.hasServer = daemon.Instance{}, false
+				m.expectServer = false
+				m.clearCrash()
+				m.resetRestartState()
+			case msg.hasSt && msg.router:
+				m.router = daemon.Instance{State: msg.state, Alive: true}
+				m.hasRouter = true
 				m.logSel, m.logName = 1, "router"
+			case msg.hasSt:
+				m.server = daemon.Instance{State: msg.state, Alive: true}
+				m.hasServer = true
+				m.expectServer = true
+				m.clearCrash()
+				if !msg.auto {
+					m.resetRestartState()
+				}
+				m.logSel, m.logName = 0, "server"
 			}
 		}
 		cmd := m.refreshLater(150 * time.Millisecond)
@@ -395,6 +428,7 @@ func (m *Model) applyTick(msg tickMsg) {
 		m.cpuAvg = m.cpuAvg*0.6 + msg.snap.CPUPercent*0.4
 	}
 	m.cpuSamples++
+	m.detectCrash(msg)
 	m.server, m.hasServer = msg.server, msg.hasServer
 	m.router, m.hasRouter = msg.router, msg.hasRouter
 	m.serverHealth, m.routerHealth = msg.serverHealth, msg.routerHealth
@@ -458,6 +492,7 @@ func (m *Model) refreshLater(delay time.Duration) tea.Cmd {
 	selected := m.selectedRouterID()
 	tabAt := m.tab
 	alertsOn := m.alertEngine != nil && m.alertEngine.Enabled()
+	watchServer := m.hasServer || m.expectServer
 	return func() tea.Msg {
 		if delay > 0 {
 			time.Sleep(delay)
@@ -478,6 +513,12 @@ func (m *Model) refreshLater(delay time.Duration) tea.Cmd {
 				}
 				msg.srvStats, msg.srvSlots, msg.srvStatsErr = c.ScrapeInference(ctx, "")
 				cancel()
+			} else if watchServer {
+				// Tail only around the alive -> dead transition so the
+				// crash card sees the lines that explain this launch.
+				if lines, err := mgr.Tail("server", 200); err == nil {
+					msg.serverLog = lines
+				}
 			}
 		}
 		if inst, err := mgr.Status("router"); err == nil {

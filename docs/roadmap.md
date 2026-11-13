@@ -76,9 +76,9 @@ Shipped foundation:
 | Config | TOML schema, layered inheritance, validation, provenance/explain, comment-preserving edits and override reset |
 | Fit | Dense, hybrid-attention, sliding-window, shared-KV and MoE-expert VRAM estimate, auto-fit solver with cache/CPU-offload fallbacks, saving a recommendation as a preset, GGUF metadata and tensor reader, AMD telemetry |
 | Measure | `wool bench` against an ephemeral, managed or explicit server; raw runs plus median/min/max, prompt/generation throughput and peak VRAM; bounded history, trend sparklines, two-run comparison, interleaved A/B comparison and conservative calibration in the CLI and TUI; optional post-health smoke test with a verified badge |
-| Observe | Dashboard, hardware sparklines, log tail, structured request table, router `/metrics` and `/slots`, configurable alerts |
-| Operate | Start/stop/restart, stale-state cleanup, log tailing, deduplicated alerts with optional desktop and webhook delivery |
-| CLI | `run`, `stop`, `status`, `logs`, `alerts`, `router`, `list`, `doctor`, `fit`, `bench`, `config`, JSON for some commands |
+| Observe | Dashboard, hardware sparklines, log tail, structured request table, router `/metrics` and `/slots`, configurable alerts, crash cards with classified log lines |
+| Operate | Start/stop/restart, stale-state cleanup, log tailing, deduplicated alerts with optional desktop and webhook delivery, opt-in in-session crash restart with backoff |
+| CLI | `run`, `restart`, `stop`, `status`, `logs`, `alerts`, `router`, `list`, `doctor`, `fit`, `bench`, `config`, JSON for some commands |
 
 Known gaps that shape the sequence:
 
@@ -87,7 +87,7 @@ Known gaps that shape the sequence:
 | Observations are shown and can correct the estimate after three matching samples | Calibration is a display hint and must be opted into with `wool fit --calibrated` |
 | Unknown tensor layouts and SWA patterns fall back to file size | Some architectures and quant types are marked approximate |
 | Benchmarks are recorded with history and a scripted, interleaved A/B comparison, but the noise warning is a coarse spread guard | Small deltas can still be noise; use more rounds before trusting them |
-| No crash detection or restart policy | A server can die silently |
+| No detached supervisor | Automatic restart only works while a wool process is attached; use systemd for a service |
 | Models are configured by hand | Setup friction before the first launch |
 | One standalone server and one router | No named instances or fleets |
 
@@ -469,7 +469,7 @@ boundary.
 | M4.1 | [Live inference panel](features/m4-01-live-inference-panel.md) | M4 | P1 | M | — | shipped |
 | M4.2 | [Structured request log](features/m4-02-structured-request-log.md) | M4 | P2 | M | M4.1 | shipped |
 | M4.3 | [Alerts](features/m4-03-alerts.md) | M4 | P1 | M | M4.1 | shipped |
-| M4.4 | [Crash detection and restart policy](features/m4-04-crash-detection-and-restart-policy.md) | M4 | P1 | L | — | planned |
+| M4.4 | [Crash detection and restart policy](features/m4-04-crash-detection-and-restart-policy.md) | M4 | P1 | L | — | shipped |
 | M4.5 | [Router eviction visualization](features/m4-05-router-eviction-visualization.md) | M4 | P2 | M | M2.1 | planned |
 | M4.6 | [Warm sets and profiles](features/m4-06-warm-sets-and-profiles.md) | M4 | P2 | M | M4.5 | planned |
 | M4.7 | [Router usage statistics](features/m4-07-router-usage-statistics.md) | M4 | P2 | S/M | M1.3, M4.1 | planned |

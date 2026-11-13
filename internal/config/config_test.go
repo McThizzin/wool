@@ -3,6 +3,7 @@ package config
 import (
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestLoadExample(t *testing.T) {
@@ -286,5 +287,69 @@ smoke_timeout = "soon"
 path = "a.gguf"
 `), "test"); err == nil {
 		t.Fatal("expected invalid smoke_timeout to fail")
+	}
+}
+
+func TestRestartDefaultsAndValidation(t *testing.T) {
+	cfg, err := Parse([]byte(`
+[models.a]
+path = "a.gguf"
+`), "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Server.Restart != "never" {
+		t.Fatalf("restart = %q, want never", cfg.Server.Restart)
+	}
+	if cfg.Server.RestartEnabled() {
+		t.Fatal("restart must default to disabled")
+	}
+	if cfg.Server.RestartMaxAttempts() != 3 {
+		t.Fatalf("restart_max = %d, want 3", cfg.Server.RestartMaxAttempts())
+	}
+	if cfg.Server.RestartWindowDuration() != 10*time.Minute {
+		t.Fatalf("restart_window = %s, want 10m", cfg.Server.RestartWindowDuration())
+	}
+	if cfg.Server.RestartBackoffDuration() != 2*time.Second {
+		t.Fatalf("restart_backoff = %s, want 2s", cfg.Server.RestartBackoffDuration())
+	}
+
+	cfg, err = Parse([]byte(`
+[server]
+restart = "on-failure"
+restart_max = 0
+restart_window = "1m"
+restart_backoff = "500ms"
+[models.a]
+path = "a.gguf"
+`), "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.Server.RestartEnabled() || cfg.Server.RestartMaxAttempts() != 0 {
+		t.Fatalf("restart config = %+v", cfg.Server)
+	}
+	if cfg.Server.RestartWindowDuration() != time.Minute || cfg.Server.RestartBackoffDuration() != 500*time.Millisecond {
+		t.Fatalf("durations = %s/%s", cfg.Server.RestartWindowDuration(), cfg.Server.RestartBackoffDuration())
+	}
+
+	bad := []string{
+		`[server]
+restart = "sometimes"`,
+		`[server]
+restart_max = -1`,
+		`[server]
+restart_window = "soon"`,
+		`[server]
+restart_window = "0s"`,
+		`[server]
+restart_backoff = "soon"`,
+		`[server]
+restart_backoff = "-1s"`,
+	}
+	for _, body := range bad {
+		if _, err := Parse([]byte(body+"\n[models.a]\npath = \"a.gguf\"\n"), "test"); err == nil {
+			t.Fatalf("expected invalid restart config to fail: %s", body)
+		}
 	}
 }
