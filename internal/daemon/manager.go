@@ -20,16 +20,17 @@ import (
 // Spec describes one launch. Args is a builder because the manager may have
 // to pick a different port than requested.
 type Spec struct {
-	Name     string
-	Kind     Kind
-	Preset   string
-	Model    string
-	Bin      string
-	Host     string
-	Port     int
-	AutoPort bool
-	Env      []string
-	Args     func(port int) []string
+	Name       string
+	Kind       Kind
+	Supervised bool
+	Preset     string
+	Model      string
+	Bin        string
+	Host       string
+	Port       int
+	AutoPort   bool
+	Env        []string
+	Args       func(port int) []string
 }
 
 // SpecFromState rebuilds a launch spec from a recorded instance. It is used by
@@ -42,13 +43,14 @@ func SpecFromState(s State) Spec {
 	}
 	args := append([]string(nil), s.Args...)
 	return Spec{
-		Name:   s.Name,
-		Kind:   s.Kind,
-		Preset: s.Preset,
-		Model:  s.Model,
-		Bin:    s.Bin,
-		Host:   host,
-		Port:   s.Port,
+		Name:       s.Name,
+		Kind:       s.Kind,
+		Supervised: s.Supervised,
+		Preset:     s.Preset,
+		Model:      s.Model,
+		Bin:        s.Bin,
+		Host:       host,
+		Port:       s.Port,
 		Args: func(int) []string {
 			return append([]string(nil), args...)
 		},
@@ -95,7 +97,7 @@ func (m *Manager) Start(spec Spec) (State, error) {
 	defer m.mu.Unlock()
 
 	if prev, err := Load(m.StateDir, spec.Name); err == nil {
-		if Alive(prev.PID, prev.StartTicks) {
+		if Alive(prev.PID, prev.StartTicks) || (prev.Supervised && groupAlive(prev.PGID)) {
 			return zero, fmt.Errorf("%s is already running (pid %d, port %d)", spec.Name, prev.PID, prev.Port)
 		}
 		if err := removeState(m.StateDir, spec.Name); err != nil {
@@ -166,6 +168,7 @@ func (m *Manager) Start(spec Spec) (State, error) {
 	state := State{
 		Name:       spec.Name,
 		Kind:       spec.Kind,
+		Supervised: spec.Supervised,
 		Preset:     spec.Preset,
 		Model:      spec.Model,
 		Host:       spec.Host,
@@ -186,6 +189,9 @@ func (m *Manager) Start(spec Spec) (State, error) {
 }
 
 // Stop terminates the process group, escalating to SIGKILL after timeout.
+// A supervised instance is stopped through its supervisor so a clean stop is
+// not mistaken for a crash; the group is still killed if the supervisor
+// wedges or has already died and left an orphaned child.
 func (m *Manager) Stop(name string, timeout time.Duration) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -194,11 +200,14 @@ func (m *Manager) Stop(name string, timeout time.Duration) error {
 	if err != nil {
 		return err
 	}
-	if !Alive(s.PID, s.StartTicks) {
-		return removeState(m.StateDir, name)
-	}
 	if timeout <= 0 {
 		timeout = 15 * time.Second
+	}
+	if s.Supervised {
+		return m.stopSupervised(s, timeout)
+	}
+	if !Alive(s.PID, s.StartTicks) {
+		return removeState(m.StateDir, name)
 	}
 	if err := killGroup(s, syscall.SIGTERM); err != nil && !errors.Is(err, syscall.ESRCH) {
 		return fmt.Errorf("signal %s: %w", name, err)
@@ -215,6 +224,36 @@ func (m *Manager) Stop(name string, timeout time.Duration) error {
 	return fmt.Errorf("%s (pid %d) survived SIGKILL", name, s.PID)
 }
 
+func (m *Manager) stopSupervised(s State, timeout time.Duration) error {
+	supervisor := Alive(s.PID, s.StartTicks)
+	group := groupAlive(s.PGID)
+	if !supervisor && !group {
+		return removeState(m.StateDir, s.Name)
+	}
+	if supervisor {
+		// Signal only the supervisor: it owns the child lifecycle and will
+		// stop the child without treating the exit as a crash.
+		if err := syscall.Kill(s.PID, syscall.SIGTERM); err != nil && !errors.Is(err, syscall.ESRCH) {
+			return fmt.Errorf("signal %s: %w", s.Name, err)
+		}
+	} else {
+		// The supervisor is gone; the recorded group still holds an orphan.
+		if err := killGroup(s, syscall.SIGTERM); err != nil && !errors.Is(err, syscall.ESRCH) {
+			return fmt.Errorf("signal %s: %w", s.Name, err)
+		}
+	}
+	if waitDead(s, timeout) {
+		return removeState(m.StateDir, s.Name)
+	}
+	if err := killGroup(s, syscall.SIGKILL); err != nil && !errors.Is(err, syscall.ESRCH) {
+		return fmt.Errorf("kill %s: %w", s.Name, err)
+	}
+	if waitDead(s, 3*time.Second) {
+		return removeState(m.StateDir, s.Name)
+	}
+	return fmt.Errorf("%s (pid %d) survived SIGKILL", s.Name, s.PID)
+}
+
 func waitDead(s State, timeout time.Duration) bool {
 	deadline := time.Now().Add(timeout)
 	for {
@@ -228,11 +267,20 @@ func waitDead(s State, timeout time.Duration) bool {
 	}
 }
 
-// Status returns a state file plus a live check.
+// Status returns a state file plus a live check. For a supervised instance the
+// saved PID is the supervisor, so Alive also covers a child that outlived it.
 func (m *Manager) Status(name string) (Instance, error) {
 	s, err := Load(m.StateDir, name)
 	if err != nil {
 		return Instance{}, err
+	}
+	if s.Supervised {
+		supervisor := Alive(s.PID, s.StartTicks)
+		return Instance{
+			State:           s,
+			Alive:           supervisor || groupAlive(s.PGID),
+			SupervisorAlive: supervisor,
+		}, nil
 	}
 	return Instance{State: s, Alive: Alive(s.PID, s.StartTicks)}, nil
 }

@@ -10,8 +10,6 @@ import (
 	"wool/internal/ui"
 )
 
-const maxRestartBackoff = time.Minute
-
 // detectCrash compares the previous tick with the new one. A state file that
 // is present but whose process is gone means the server died without going
 // through wool. A clean stop removes the state file, so it never reaches this
@@ -68,43 +66,19 @@ func (m *Model) resetRestartState() {
 
 // pruneRestartHist drops attempts outside the configured sliding window.
 func (m *Model) pruneRestartHist(now time.Time) {
-	cutoff := now.Add(-m.cfg.Server.RestartWindowDuration())
-	kept := m.restartHist[:0]
-	for _, at := range m.restartHist {
-		if at.After(cutoff) {
-			kept = append(kept, at)
-		}
-	}
-	m.restartHist = kept
+	m.restartHist = daemon.PruneAttempts(m.restartHist, now, m.cfg.Server.RestartWindowDuration())
 }
 
 // restartAttempts counts attempts inside the window without mutating history,
 // so rendering a status line is side-effect free.
 func (m *Model) restartAttempts(now time.Time) int {
-	cutoff := now.Add(-m.cfg.Server.RestartWindowDuration())
-	n := 0
-	for _, at := range m.restartHist {
-		if at.After(cutoff) {
-			n++
-		}
-	}
-	return n
+	return daemon.AttemptsInWindow(m.restartHist, now, m.cfg.Server.RestartWindowDuration())
 }
 
 // nextRestartDelay doubles the configured backoff per attempt, capped at one
 // minute so a persistent failure is retried often enough to be useful.
 func (m *Model) nextRestartDelay(attempt int) time.Duration {
-	d := m.cfg.Server.RestartBackoffDuration()
-	for i := 0; i < attempt; i++ {
-		if d >= maxRestartBackoff {
-			return maxRestartBackoff
-		}
-		d *= 2
-	}
-	if d > maxRestartBackoff {
-		return maxRestartBackoff
-	}
-	return d
+	return daemon.NextRestartDelay(m.cfg.Server.RestartBackoffDuration(), attempt)
 }
 
 // scheduleRestart arms the next automatic attempt after a crash. It does

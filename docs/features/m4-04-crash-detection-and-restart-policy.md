@@ -5,8 +5,8 @@ Part of [M4](../roadmap.md#milestone-m4). See the
 
 **Priority** P1 · **Size** L · **Depends** none
 
-**Status** shipped (detection, in-session restart and manual restart; the
-detached `wool supervise` helper is deferred)
+**Status** shipped (detection, in-session restart, manual restart and detached
+`wool supervise`)
 
 **Problem.** A standalone server can die silently. The user finds out when a
 request fails, and the log tail rarely says why in one line.
@@ -20,9 +20,9 @@ request fails, and the log tail rarely says why in one line.
 - **In-session restart:** optional `[server] restart = "never" | "on-failure" |
   "always"` with backoff, max attempts and a time window. This works while a
   wool process is attached.
-- **Detached supervision:** if in-session restart is not enough, add a small
-  `wool supervise TARGET` helper that owns the child, restarts it with backoff
-  and writes the state file. `wool stop` stops the supervisor and the child.
+- **Detached supervision:** `wool supervise TARGET` starts a small supervisor
+  that owns the child, restarts it with backoff and keeps the state file
+  pointing at the supervisor. `wool stop` stops the supervisor and the child.
 
 **Acceptance.**
 
@@ -31,9 +31,7 @@ request fails, and the log tail rarely says why in one line.
 - [x] Manual restart works from the TUI and CLI.
 - [x] Restart policy respects backoff, max attempts and the window.
 - [x] A clean `wool stop` never triggers a restart.
-- [ ] The supervisor leaves no zombies and validates PID start ticks.
-      Deferred with `wool supervise`; the in-session path reuses the existing
-      PID/start-tick checks in `daemon.Manager`.
+- [x] The supervisor leaves no zombies and validates PID start ticks.
 - [x] Tests use short-lived fake children.
 
 **Implementation notes.**
@@ -59,6 +57,25 @@ request fails, and the log tail rarely says why in one line.
 - `wool restart [server|router] [--no-wait]` reloads the recorded state with
   `daemon.SpecFromState`, reusing the original binary, argv and port instead of
   re-resolving the current config.
+- `wool supervise TARGET` records the supervisor as the instance PID and keeps
+  the child argv after `--` in the state. The supervisor re-execs as
+  `wool supervise --foreground`; its child inherits the supervisor's process
+  group, and the supervisor writes a launch header per child attempt so crash
+  classification still sees only the newest failure.
+- The supervisor always restarts an unexpected exit; `[server] restart` is not
+  consulted. `restart_max`, `restart_window` and `restart_backoff` still apply,
+  and `restart_max = 0` gives up after the first exit. Exhaustion returns
+  `daemon.ErrSupervisorExhausted` and leaves the state file for the crash card
+  and `wool restart`.
+- `wool stop` signals the supervisor, not the group, so the supervisor can stop
+  its child without treating the exit as a crash. If the supervisor is already
+  gone, the recorded group is signalled directly to clean up an orphaned child.
+- `wool status` labels supervised instances and reports an orphaned child when
+  the supervisor is dead but its process group is still alive.
+- TUI start and restart actions rebuild the launch from the current config, so
+  they replace a supervised instance with an unsupervised one. Use
+  `wool supervise` again to restore supervision. A crash-card restart reuses
+  the recorded state and keeps supervision.
 - Router-managed model children are not supervised; `llama-server` owns them.
 
 **Risk.** Supervision is the point where wool starts becoming a process

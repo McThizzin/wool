@@ -77,8 +77,8 @@ Shipped foundation:
 | Fit | Dense, hybrid-attention, sliding-window, shared-KV and MoE-expert VRAM estimate, auto-fit solver with cache/CPU-offload fallbacks, saving a recommendation as a preset, GGUF metadata and tensor reader, AMD telemetry |
 | Measure | `wool bench` against an ephemeral, managed or explicit server; raw runs plus median/min/max, prompt/generation throughput and peak VRAM; bounded history, trend sparklines, two-run comparison, interleaved A/B comparison and conservative calibration in the CLI and TUI; optional post-health smoke test with a verified badge |
 | Observe | Dashboard, hardware sparklines, log tail, structured request table, router `/metrics` and `/slots`, configurable alerts, crash cards with classified log lines |
-| Operate | Start/stop/restart, stale-state cleanup, log tailing, deduplicated alerts with optional desktop and webhook delivery, opt-in in-session crash restart with backoff |
-| CLI | `run`, `restart`, `stop`, `status`, `logs`, `alerts`, `router`, `list`, `doctor`, `fit`, `bench`, `config`, JSON for some commands |
+| Operate | Start/stop/restart, stale-state cleanup, log tailing, deduplicated alerts with optional desktop and webhook delivery, opt-in in-session crash restart with backoff, detached `wool supervise` |
+| CLI | `run`, `supervise`, `restart`, `stop`, `status`, `logs`, `alerts`, `router`, `list`, `doctor`, `fit`, `bench`, `config`, JSON for some commands |
 
 Known gaps that shape the sequence:
 
@@ -87,7 +87,7 @@ Known gaps that shape the sequence:
 | Observations are shown and can correct the estimate after three matching samples | Calibration is a display hint and must be opted into with `wool fit --calibrated` |
 | Unknown tensor layouts and SWA patterns fall back to file size | Some architectures and quant types are marked approximate |
 | Benchmarks are recorded with history and a scripted, interleaved A/B comparison, but the noise warning is a coarse spread guard | Small deltas can still be noise; use more rounds before trusting them |
-| No detached supervisor | Automatic restart only works while a wool process is attached; use systemd for a service |
+| Detached supervision is opt-in and is not a service manager | `wool supervise` covers the standalone server; use systemd for durable service management |
 | Models are configured by hand | Setup friction before the first launch |
 | One standalone server and one router | No named instances or fleets |
 
@@ -265,8 +265,9 @@ and recover without guessing.”
 | M4.8 | [Endpoint helper](features/m4-08-endpoint-helper.md) | P3 | S |
 
 **Exit criteria:** a server can run for a day with live inference visibility,
-alerts, crash detection and an explicit restart policy; router groups and usage
-stats are usable; the endpoint helper works.
+alerts, crash detection, an explicit restart policy and optional detached
+supervision; router groups and usage stats are usable; the endpoint helper
+works.
 
 <a id="milestone-m5"></a>
 
@@ -305,8 +306,8 @@ end for the primary persona:
   and export a service without hand-editing TOML.
 - The estimate shows its raw value, observed history and calibrated correction
   when enough data exists. Fit never recommends an over-budget configuration.
-- A server survives the TUI exiting. Crash detection, restart policy and alerts
-  are available and opt-in.
+- A server survives the TUI exiting. Crash detection, restart policy, detached
+  supervision and alerts are available and opt-in.
 - Core read commands have stable JSON; the config schema is documented and old
   configs keep loading.
 - Any `llama-server` launch option can be added without hand-editing TOML; the
@@ -371,10 +372,9 @@ Promote one only when its trigger happens.
 | L3 | **Quant recommender** | Depends on discovery plus a catalog of available quants and a fit model | HF integration exists, or a local quant catalog is available | L |
 | L4 | **Parameter sweep** | Multiplies benchmark runtime and needs plotting; easy to overfit to noise | Bench history has enough runs to make a sweep comparison meaningful | L |
 | L5 | **Remote hosts over SSH** | Changes the lifecycle, state and transport model; a fleet tool, not a workstation tool | Repeated requests for remote management, or a second machine in the maintainer’s own workflow | XL |
-| L6 | **Detached supervisor** | M4.4 covers detection and in-session restart; a detached supervisor is a second process model | Users report servers dying while wool is closed, and systemd export is not enough | L |
-| L7 | **Quality/perplexity A/B** | Needs an evaluation dataset and a defensible methodology | Speed A/B is established and users want quality trade-offs | XL |
-| L8 | **Named multi-instance servers** | The daemon layer already uses names, but the TUI and CLI assume `server` and `router` | One standalone server becomes a real limitation in daily use | L |
-| L9 | **Repeated and structured flag arguments** | `[*.extra]` is a one-value map; repeated flags such as `--lora` and `--override-tensor`, or ordered argv, need a new schema and router INI handling | Users need a flag that cannot be expressed as one value | M |
+| L6 | **Quality/perplexity A/B** | Needs an evaluation dataset and a defensible methodology | Speed A/B is established and users want quality trade-offs | XL |
+| L7 | **Named multi-instance servers** | The daemon layer already uses names, but the TUI and CLI assume `server` and `router` | One standalone server becomes a real limitation in daily use | L |
+| L8 | **Repeated and structured flag arguments** | `[*.extra]` is a one-value map; repeated flags such as `--lora` and `--override-tensor`, or ordered argv, need a new schema and router INI handling | Users need a flag that cannot be expressed as one value | M |
 
 ## Cross-cutting prerequisites
 
@@ -431,8 +431,8 @@ Open questions to resolve before or during the relevant milestone:
    display-only when enough samples exist; `wool fit --calibrated` opts into
    using it.
 3. Is a detached supervisor acceptable, or should restart always be delegated
-   to systemd? Current plan: in-session restart in M4, detached supervisor only
-   if users need it.
+   to systemd? Resolved: `wool supervise` is an explicit opt-in for the
+   standalone server; systemd remains the recommendation for a durable service.
 4. Which notification targets matter: `notify-send`, a webhook, or both?
 5. Does the router expose a definitive eviction policy? Verify before M4.5;
    otherwise label the view as a prediction.

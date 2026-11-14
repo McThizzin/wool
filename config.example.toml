@@ -22,10 +22,10 @@ startup_timeout = "120s"
 poll_interval = "5s"
 smoke_test = false
 smoke_timeout = "30s"
-restart = "never"          # never | on-failure | always; active policies retry unexpected deaths
-restart_max = 3            # attempts inside restart_window; 0 disables
+restart = "never"          # never | on-failure | always; TUI retries unexpected deaths
+restart_max = 3            # attempts inside restart_window; 0 means no automatic attempts
 restart_window = "10m"
-restart_backoff = "2s"
+restart_backoff = "2s"     # wool supervise always retries within these limits
 
 # ---------------------------------------------------------------------------
 # Shared launch defaults

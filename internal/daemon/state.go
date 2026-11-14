@@ -30,6 +30,7 @@ var ErrNotRunning = errors.New("not running")
 type State struct {
 	Name       string    `json:"name"`
 	Kind       Kind      `json:"kind"`
+	Supervised bool      `json:"supervised,omitempty"`
 	Preset     string    `json:"preset,omitempty"`
 	Model      string    `json:"model,omitempty"`
 	Host       string    `json:"host"`
@@ -43,10 +44,13 @@ type State struct {
 	Args       []string  `json:"args"`
 }
 
-// Instance is a state plus a live check.
+// Instance is a state plus a live check. When State.Supervised is set, PID is
+// the supervisor and SupervisorAlive reports whether that process is still
+// there; Alive also covers a child that outlived its supervisor.
 type Instance struct {
 	State
-	Alive bool `json:"alive"`
+	Alive           bool `json:"alive"`
+	SupervisorAlive bool `json:"supervisor_alive,omitempty"`
 }
 
 // URL is the HTTP endpoint for this instance.

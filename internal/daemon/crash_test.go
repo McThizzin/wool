@@ -100,19 +100,23 @@ func TestClassifyCrashUnknownKeepsTail(t *testing.T) {
 
 func TestSpecFromState(t *testing.T) {
 	s := State{
-		Name:   "server",
-		Kind:   KindServer,
-		Preset: "p",
-		Model:  "m",
-		Bin:    "/bin/sh",
-		Host:   "127.0.0.1",
-		Port:   9090,
-		Args:   []string{"-c", "sleep 1"},
+		Name:       "server",
+		Kind:       KindServer,
+		Supervised: true,
+		Preset:     "p",
+		Model:      "m",
+		Bin:        "/bin/sh",
+		Host:       "127.0.0.1",
+		Port:       9090,
+		Args:       []string{"-c", "sleep 1"},
 	}
 	spec := SpecFromState(s)
 	if spec.Name != s.Name || spec.Kind != s.Kind || spec.Preset != s.Preset ||
 		spec.Model != s.Model || spec.Bin != s.Bin || spec.Host != s.Host || spec.Port != s.Port {
 		t.Fatalf("spec = %+v", spec)
+	}
+	if !spec.Supervised {
+		t.Fatal("restart must preserve supervision")
 	}
 	if spec.AutoPort {
 		t.Fatal("restart must reuse the recorded port")

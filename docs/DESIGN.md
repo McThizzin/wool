@@ -25,7 +25,8 @@ Goals:
 
 Non-goals for v1:
 
-- a custom process supervisor for model children (the router does that);
+- a custom process supervisor for router-managed model children (the router
+  does that; standalone supervision is limited to `wool supervise`);
 - multi-user or remote-server management;
 - downloading models;
 - exact VRAM prediction (the estimate is deliberately conservative);
@@ -40,7 +41,10 @@ wool (TUI or CLI)
         ├── daemon.Manager ──> detached llama-server --models-preset models.ini
         │                         └── router-managed model children
         │
-        └── daemon.Manager ──> detached llama-server --model <gguf>
+        ├── daemon.Manager ──> detached llama-server --model <gguf>
+        │
+        └── daemon.Manager ──> detached wool supervise --foreground
+                                  └── llama-server --model <gguf>
 ```
 
 The TUI/CLI process is not the parent after startup. `Manager.Start` uses
@@ -50,6 +54,8 @@ API. Quitting the TUI never sends a signal to a server.
 
 A single detached instance named `server` and at most one named `router` are
 supported. The router itself owns the lifecycle of the models it loads.
+`wool supervise` adds one optional process layer for the standalone server; the
+supervisor owns the child, and both stay in the same process group.
 
 ## Package map
 
@@ -303,6 +309,7 @@ The state file records:
 {
   "name": "server",
   "kind": "server",
+  "supervised": true,
   "preset": "qwen-cyber-32k",
   "model": "qwen3-4b-cyber",
   "host": "127.0.0.1",
@@ -312,16 +319,26 @@ The state file records:
   "start_ticks": 857391,
   "started_at": "2026-10-29T00:02:20-07:00",
   "log_path": ".../logs/server.log",
-  "bin": "/usr/bin/llama-server",
-  "args": ["--model", "..."]
+  "bin": "/usr/bin/wool",
+  "args": ["supervise", "--foreground", "--", "--model", "..."]
 }
 ```
 
+For a supervised instance, `pid`, `pgid`, `start_ticks` and `bin`/`args`
+describe the supervisor, not the child. `wool restart` therefore relaunches the
+supervisor from the recorded argv and supervision survives the restart.
+`Instance.Alive` is true when either the supervisor or its recorded group is
+alive; `Instance.SupervisorAlive` distinguishes an orphaned child from a live
+supervisor.
+
 Liveness requires the PID to exist, not be a zombie, and to have the same
-`starttime` field. This prevents signaling a recycled PID. `Stop` sends
-`SIGTERM` to the process group, waits, then escalates to `SIGKILL`. Logs are
-read with a bounded tail (up to 512 KiB read from the end), so a very large
-log does not stall the TUI.
+`starttime` field. This prevents signaling a recycled PID. For an unsupervised
+instance, `Stop` sends `SIGTERM` to the process group, waits, then escalates to
+`SIGKILL`. For a supervised instance it signals the supervisor first, so the
+supervisor can stop its child without treating the exit as a crash; if the
+supervisor is gone, the recorded group is signalled directly to clean up the
+orphan. Logs are read with a bounded tail (up to 512 KiB read from the end), so
+a very large log does not stall the TUI.
 
 `status` and `logs` work from any directory because they only need the XDG
 state directory. `status --json` exposes the full state, including argv.
@@ -347,6 +364,22 @@ automatic attempts do not reset the window, so a crash loop is bounded; manual
 starts, stops and restarts reset it. Dismissing a crash card also cancels its
 pending retry. Router-managed model children are not supervised here because
 `llama-server` owns them.
+
+`wool supervise TARGET` is the detached variant. It records the supervisor as
+the instance process and re-execs it as `wool supervise --foreground`, with the
+child argv after `--`. The supervisor writes a launch header before each child
+attempt, so crash classification only inspects the newest failure. It always
+restarts an unexpected exit and ignores `[server] restart`; `restart_max`,
+`restart_window` and `restart_backoff` still apply, and `restart_max = 0` gives
+up after the first exit. On exhaustion the supervisor returns
+`daemon.ErrSupervisorExhausted` and leaves the state file so the crash card and
+`wool restart` still work. The supervisor is a session leader; the child
+inherits its process group, so `wool stop` can clean up either process. The
+supervisor reaps its own child, and the manager validates the recorded start
+ticks before signalling, so recycled PIDs and zombies are not treated as live.
+TUI start and restart actions rebuild the launch from the current config, so
+they replace a supervised instance with an unsupervised one; a crash-card
+restart reuses the recorded state and keeps supervision.
 
 ## Router mode
 
@@ -999,6 +1032,7 @@ wool bench history [TARGET]          show recorded benchmark runs
 wool bench compare A B [options]     interleaved A/B benchmark comparison
 wool list [--json]                   list models and presets
 wool run TARGET [options]            start a model or preset detached
+wool supervise [options] TARGET      run a target under a detached supervisor
 wool restart [server|router] [--no-wait]  relaunch the recorded instance
 wool stop [server|router|all]        stop detached servers
 wool status [name] [--json]          show detached server state
@@ -1014,6 +1048,9 @@ wool version
 ```
 
 `run` options: `--dry-run`, `--restart`, `--port N`, `--no-wait`.
+`supervise` options: `--restart`, `--port N`, `--no-wait`; it always restarts
+unexpected exits within the configured `restart_max`, `restart_window` and
+`restart_backoff`.
 `fit` options: `--vram SIZE`, `--cache-type TYPE`, `--gpu-layers N`,
 `--n-cpu-moe N`, `--save-preset NAME`, `--force`, `--json`. `--force` is only
 valid with `--save-preset`; saving happens before output so a failure is
@@ -1115,8 +1152,10 @@ criteria. The limitations below are the current state, not the plan.
   updates only the fit-controlled keys; applying a recommendation to an
   existing target remains a separate draft edit.
 - In-session crash restart is opt-in and only runs while a wool process is
-  attached. There is no detached supervisor in v1; use systemd for a service.
-  Router-managed models are supervised by `llama-server` itself.
+  attached. `wool supervise` is the detached option for the standalone server;
+  it is not used for router-managed models, which `llama-server` supervises
+  itself. A supervised instance is still one wool process plus one child, not a
+  system service; use systemd for durable service management.
 - Logs are tailed from disk on a timer rather than streamed; this is simple
   and works across reattachments. The structured request table is best effort:
   `llama-server` log formats drift, unknown lines are ignored, and a format
