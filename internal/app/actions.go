@@ -388,6 +388,7 @@ func (m *Model) showHelp() {
 		"  S                      restart the selected preset, model or crashed server",
 		"  r / R                  start / stop the router",
 		"  l / u                  load / unload the selected router model",
+		"  w                      load a warm-set group (Router tab)",
 		"  i                      focus the inference tab",
 		"  m                      switch the inference source, cycle the log model filter, or pin router stats",
 		"  v                      show the raw log instead of the request table",
@@ -410,9 +411,10 @@ func (m *Model) showHelp() {
 		"  /restart [name]        restart with the selected target or the crashed server",
 		"  /dismiss               hide a crash card and cancel its pending retry",
 		"  /stop [server|router|all]",
-		"  /router [start|stop|reload|models]",
+		"  /router [start|stop|reload|models|groups]",
 		"  /load ID               ask the router to load a model",
 		"  /unload ID             ask the router to unload a model",
+		"  /load-group NAME       load a configured warm-set group",
 		"  /reload                reload config.toml",
 		"  /edit                  open the option editor",
 		"  /fit                   open the option editor and fit overlay",
@@ -489,8 +491,14 @@ func (m *Model) runCommand(line string) (tea.Cmd, bool) {
 			return m.reloadRouterModels(), true
 		case "models", "ps":
 			m.setTab(tabRouter)
+		case "groups":
+			if len(m.groups) == 0 {
+				m.setToast("no groups configured")
+			} else {
+				m.setToast("groups: " + strings.Join(m.groups, ", "))
+			}
 		default:
-			m.setToast("router: want start, stop, reload or models")
+			m.setToast("router: want start, stop, reload, models or groups")
 		}
 	case "load", "unload":
 		if len(args) == 0 {
@@ -511,6 +519,12 @@ func (m *Model) runCommand(line string) (tea.Cmd, bool) {
 		m.routerSel = idx
 		m.routerSelID = args[0]
 		return m.routerAction(cmd == "load"), true
+	case "load-group":
+		if len(args) == 0 {
+			m.setToast("load-group: group name required")
+			return nil, true
+		}
+		return m.requestGroupLoad(args[0]), true
 	case "reload", "refresh":
 		m.reloadConfig()
 	case "doctor":

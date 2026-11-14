@@ -19,6 +19,7 @@
 - **One TOML source of truth.** Models, presets, launch options, sampling, router settings, and themes all live in `config.toml`. There is no legacy `presets.conf` importer.
 - **Effective-config diff.** `wool config diff TARGET` and the TUI `D` overlay show only the launch options that differ from the model or defaults layer, with the source of each side.
 - **Full router control.** Start/stop the router, list models, load/unload, reload presets, and read per-model stats and slots.
+- **Warm sets.** Named `[groups.*]` lists load together with one command or one key, continue after a failure, and report exactly which models failed. Groups larger than `models_max` warn before starting.
 - **Eviction view.** The Router tab shows resident models against `models_max`, the configured memory margin, wool's estimate for the resident set, and a best-effort LRU prediction of what loading the selected model would evict. Missing estimates say `unknown`, and the victim is always labeled as a prediction.
 - **VRAM-fit estimates.** Reads GGUF metadata and the tensor table, models llama.cpp's tensor placement, Gemma-style sliding-window/shared KV, hybrid attention (Qwen3.5/Qwen3-Next), per-layer KV heads, and quantized KV cache types. The UI shows `weights + KV + overhead`, the budget after reserve and other GPU usage, headroom and the limiting term.
 - **Auto-fit recommendations.** `wool fit TARGET` binary-searches the largest context that fits the budget, capped at the model's native context. When the requested settings cannot hold a useful context it ranks fallbacks: lower KV cache precision first, then CPU offload (using `n_cpu_moe` for MoE models). Every recommendation is within budget and includes weights, KV, overhead, headroom, the limiting term and the changes it makes. `--save-preset NAME` writes the result as a new preset.
@@ -440,9 +441,20 @@ wool router start
 wool router models
 wool router load qwen3-4b-cyber
 wool router unload qwen3-4b-cyber
+wool router load-group coding
+wool router groups
 wool router reload
 wool router stop
 ```
+
+Warm sets are named groups of model IDs:
+
+```toml
+[groups.coding]
+models = ["qwen3-4b-cyber", "lfm3-1-7b"]
+```
+
+`wool router load-group coding` loads the models in order, waits for each to reach `loaded` or `sleeping`, continues after an error, and prints a per-model result plus `group coding: N/M loaded; failed: …`. A model that is already resident is reported as loaded without a second request. When the group is larger than `router.models_max`, wool warns before starting because the router will evict earlier models as later ones load. The TUI action is `w` on the Router tab (or `/load-group NAME`); an over-limit group asks for confirmation first.
 
 The Router tab summarizes the resident set as `resident N/limit · margin N MiB · est SIZE`. It predicts the effect of loading the selected model: `predicted eviction: A, B (LRU approx.) if loading X (SIZE)`, `predicted eviction: none if loading X (SIZE)`, or `predicted eviction: unknown (estimate missing) if loading X`. The pinned `llama-server` router evicts idle models in LRU order when `models_max` would be exceeded; `GET /models` does not expose `last_used`, so the TUI approximates the order from when each model was first seen resident. Busy models are never evicted, and the prediction is not a guarantee.
 
@@ -505,7 +517,7 @@ go vet ./...
 go test -count=1 ./...
 ```
 
-Tests cover config parsing/merging/editing, effective-config diffs, GGUF metadata and tensor parsing, hybrid KV and MoE expert-offload estimation, dense/hybrid/MoE auto-fit solving and fallback ranking, measurement storage and capture, benchmark history filtering and store rotation, benchmark runners and `llama-bench` parsing, interleaved A/B comparison and its noise warnings, argv and INI generation, router metrics and eviction prediction, alert thresholds, cooldowns, log fingerprints and notifier behaviour, crash classification, restart backoff/window handling, detached supervision and orphan cleanup, daemon lifecycle and PID validation, sysinfo parsing, themes, and TUI rendering at multiple terminal sizes. Benchmark tests use a fake HTTP server and temporary state; alert tests use a fake notifier and an injected clock; restart and supervisor tests use short-lived `/bin/sh` children, and none require `notify-send` or the network.
+Tests cover config parsing/merging/editing, group warm sets, effective-config diffs, GGUF metadata and tensor parsing, hybrid KV and MoE expert-offload estimation, dense/hybrid/MoE auto-fit solving and fallback ranking, measurement storage and capture, benchmark history filtering and store rotation, benchmark runners and `llama-bench` parsing, interleaved A/B comparison and its noise warnings, argv and INI generation, router metrics and eviction prediction, sequential warm-set loading with a fake router client, alert thresholds, cooldowns, log fingerprints and notifier behaviour, crash classification, restart backoff/window handling, detached supervision and orphan cleanup, daemon lifecycle and PID validation, sysinfo parsing, themes, and TUI rendering at multiple terminal sizes. Benchmark tests use a fake HTTP server and temporary state; alert tests use a fake notifier and an injected clock; restart and supervisor tests use short-lived `/bin/sh` children, and none require `notify-send` or the network.
 
 ## Limitations
 

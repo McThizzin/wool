@@ -61,7 +61,7 @@ Usage:
   wool stats [MODEL] [options]         live inference rates from the running server
   wool logs [name] [-n N] [-f] [--json] show a server log, or parsed requests
   wool alerts [--json]                 evaluate alert rules against current state
-  wool router [start|stop|status|models|load ID|unload ID|reload|ini]
+  wool router [start|stop|status|models|load ID|unload ID|load-group NAME|groups|reload|ini]
   wool config path                     print the config path
   wool config init [--force] [PATH]    write a sample config
   wool config explain TARGET [--json]  show each value and where it came from
@@ -3371,6 +3371,10 @@ func cmdRouter(cfgPath string, args []string) int {
 		return routerAction("load", args)
 	case "unload":
 		return routerAction("unload", args)
+	case "load-group":
+		return routerLoadGroup(cfgPath, args)
+	case "groups":
+		return routerGroups(cfgPath)
 	case "reload":
 		client, err := routerClient()
 		if err != nil {
@@ -3509,6 +3513,96 @@ func printModels(client *llamaserver.Client) int {
 		fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", m.ID, status, failed, strings.Join(m.Aliases, ","))
 	}
 	w.Flush()
+	return 0
+}
+
+func routerGroups(cfgPath string) int {
+	cfg, err := loadConfig(cfgPath)
+	if err != nil {
+		printConfigError(cfgPath, err)
+		return 1
+	}
+	ids := cfg.GroupIDs()
+	if len(ids) == 0 {
+		fmt.Println("no groups configured")
+		return 0
+	}
+	w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
+	fmt.Fprintln(w, "GROUP\tMODELS")
+	for _, id := range ids {
+		fmt.Fprintf(w, "%s\t%s\n", id, strings.Join(cfg.Groups[id].Models, ", "))
+	}
+	w.Flush()
+	return 0
+}
+
+func routerLoadGroup(cfgPath string, args []string) int {
+	fs := flag.NewFlagSet("router load-group", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	timeout := fs.Duration("timeout", 120*time.Second, "how long to wait for each model")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	if fs.NArg() != 1 {
+		fmt.Fprintln(os.Stderr, "usage: wool router load-group [--timeout D] NAME")
+		return 2
+	}
+	name := fs.Arg(0)
+	cfg, err := loadConfig(cfgPath)
+	if err != nil {
+		printConfigError(cfgPath, err)
+		return 1
+	}
+	group, ok := cfg.Groups[name]
+	if !ok {
+		if ids := cfg.GroupIDs(); len(ids) > 0 {
+			fmt.Fprintf(os.Stderr, "wool: unknown group %q (available: %s)\n", name, strings.Join(ids, ", "))
+		} else {
+			fmt.Fprintf(os.Stderr, "wool: unknown group %q (no groups configured)\n", name)
+		}
+		return 1
+	}
+	limit := cfg.Router.ModelsMax
+	overLimit := limit > 0 && len(group.Models) > limit
+	if overLimit {
+		fmt.Fprintf(os.Stderr, "warning: group %s has %d models but router.models_max is %d; earlier models will be evicted\n",
+			name, len(group.Models), limit)
+	}
+	client, err := routerClient()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "wool: %v\n", err)
+		return 1
+	}
+	results := llamaserver.LoadGroup(context.Background(), client, group.Models, *timeout, 400*time.Millisecond)
+	w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
+	fmt.Fprintln(w, "MODEL\tRESULT")
+	var failed []string
+	loaded := 0
+	for _, r := range results {
+		value := r.Status
+		if r.Err != nil {
+			failed = append(failed, r.Model)
+			value = "failed: " + r.Err.Error()
+		} else {
+			loaded++
+			if value == "" {
+				value = "loaded"
+			}
+		}
+		fmt.Fprintf(w, "%s\t%s\n", r.Model, value)
+	}
+	w.Flush()
+	fmt.Printf("group %s: %d/%d loaded", name, loaded, len(results))
+	if len(failed) > 0 {
+		fmt.Printf("; failed: %s", strings.Join(failed, ", "))
+	}
+	fmt.Println()
+	if overLimit {
+		fmt.Printf("note: router.models_max is %d; only the last %d model(s) remain resident\n", limit, limit)
+	}
+	if len(failed) > 0 {
+		return 1
+	}
 	return 0
 }
 

@@ -24,6 +24,7 @@ type Config struct {
 	Defaults Options                     `toml:"defaults"`
 	Models   map[string]ModelConfig      `toml:"models"`
 	Presets  map[string]PresetConfig     `toml:"presets"`
+	Groups   map[string]GroupConfig      `toml:"groups"`
 	Router   RouterConfig                `toml:"router"`
 	Alerts   AlertsConfig                `toml:"alerts"`
 	Themes   map[string]theme.Definition `toml:"themes"`
@@ -146,6 +147,11 @@ type ModelConfig struct {
 type PresetConfig struct {
 	Model string `toml:"model"`
 	Options
+}
+
+// GroupConfig is a warm set: model IDs loaded together in one action.
+type GroupConfig struct {
+	Models []string `toml:"models"`
 }
 
 type RouterConfig struct {
@@ -305,6 +311,9 @@ func (c *Config) ApplyDefaults() {
 	if c.Presets == nil {
 		c.Presets = map[string]PresetConfig{}
 	}
+	if c.Groups == nil {
+		c.Groups = map[string]GroupConfig{}
+	}
 
 	if c.Router.ModelsMax == 0 {
 		c.Router.ModelsMax = 1
@@ -382,6 +391,30 @@ func (c *Config) Validate() error {
 			if err := validateSampling("presets."+id+".sampling", applySampling(DefaultSampling(), p.Options.Sampling)); err != nil {
 				errs = append(errs, err)
 			}
+		}
+	}
+	for id, g := range c.Groups {
+		if err := validateID("groups."+id, id); err != nil {
+			errs = append(errs, err)
+		}
+		if len(g.Models) == 0 {
+			errs = append(errs, fmt.Errorf("groups.%s.models is empty", id))
+			continue
+		}
+		seen := make(map[string]bool, len(g.Models))
+		for _, model := range g.Models {
+			if strings.TrimSpace(model) == "" {
+				errs = append(errs, fmt.Errorf("groups.%s.models contains an empty model ID", id))
+				continue
+			}
+			if _, ok := c.Models[model]; !ok {
+				errs = append(errs, fmt.Errorf("groups.%s references unknown model %q", id, model))
+				continue
+			}
+			if seen[model] {
+				errs = append(errs, fmt.Errorf("groups.%s lists model %q more than once", id, model))
+			}
+			seen[model] = true
 		}
 	}
 	if c.Router.ModelsMax < 0 {
@@ -481,6 +514,16 @@ func (c *Config) ModelIDs() []string {
 func (c *Config) PresetIDs() []string {
 	ids := make([]string, 0, len(c.Presets))
 	for id := range c.Presets {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	return ids
+}
+
+// GroupIDs returns warm-set names in stable order.
+func (c *Config) GroupIDs() []string {
+	ids := make([]string, 0, len(c.Groups))
+	for id := range c.Groups {
 		ids = append(ids, id)
 	}
 	sort.Strings(ids)

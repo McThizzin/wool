@@ -2,6 +2,7 @@ package config
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -17,6 +18,16 @@ func TestLoadExample(t *testing.T) {
 	}
 	if len(cfg.Presets) != 12 {
 		t.Fatalf("presets = %d, want 12", len(cfg.Presets))
+	}
+	if len(cfg.Groups) != 1 {
+		t.Fatalf("groups = %d, want 1", len(cfg.Groups))
+	}
+	group := cfg.Groups["coding"]
+	if len(group.Models) != 2 || group.Models[0] != "qwen3-4b-cyber" || group.Models[1] != "lfm3-1-7b" {
+		t.Fatalf("coding group = %v", group.Models)
+	}
+	if ids := cfg.GroupIDs(); len(ids) != 1 || ids[0] != "coding" {
+		t.Fatalf("group IDs = %v", ids)
 	}
 
 	r, err := cfg.Resolve("qwen35-4b-mtp", nil)
@@ -159,6 +170,57 @@ model = "missing"
 `), "test")
 	if err == nil {
 		t.Fatal("expected error")
+	}
+}
+
+func TestParseGroups(t *testing.T) {
+	cfg, err := Parse([]byte(`
+[models.a]
+path = "a.gguf"
+[models.b]
+path = "b.gguf"
+[groups.coding]
+models = ["a", "b"]
+`), "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := cfg.Groups["coding"].Models; len(got) != 2 || got[0] != "a" || got[1] != "b" {
+		t.Fatalf("models = %v", got)
+	}
+
+	tests := []struct {
+		name, body, want string
+	}{
+		{"empty", "[groups.g]\nmodels = []\n", "models is empty"},
+		{"unknown", "[models.a]\npath = \"a.gguf\"\n[groups.g]\nmodels = [\"missing\"]\n", "unknown model"},
+		{"duplicate", "[models.a]\npath = \"a.gguf\"\n[groups.g]\nmodels = [\"a\", \"a\"]\n", "more than once"},
+		{"bad id", "[models.a]\npath = \"a.gguf\"\n[groups.\"bad id\"]\nmodels = [\"a\"]\n", "groups.bad id"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := Parse([]byte(tc.body), "test")
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("error = %v, want %q", err, tc.want)
+			}
+		})
+	}
+}
+
+func TestGroupIDsSorted(t *testing.T) {
+	cfg, err := Parse([]byte(`
+[models.a]
+path = "a.gguf"
+[groups.zeta]
+models = ["a"]
+[groups.alpha]
+models = ["a"]
+`), "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(cfg.GroupIDs(), ","); got != "alpha,zeta" {
+		t.Fatalf("group IDs = %s", got)
 	}
 }
 

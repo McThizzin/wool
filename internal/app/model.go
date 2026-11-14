@@ -90,10 +90,14 @@ type Model struct {
 
 	presets     []string
 	models      []string
+	groups      []string
 	presetSel   int
 	modelSel    int
 	routerSel   int
 	routerSelID string
+	groupSel    int
+	groupPick   bool
+	groupWait   string
 
 	fitKey   string
 	fit      fitInfo
@@ -215,6 +219,13 @@ type actionMsg struct {
 	measure *measureJob
 }
 
+// groupMsg carries the outcome of one warm-set load.
+type groupMsg struct {
+	name    string
+	results []llamaserver.GroupResult
+	limit   int
+}
+
 // measureJob carries the pre-launch state needed to record one observation
 // after the server becomes healthy.
 type measureJob struct {
@@ -283,6 +294,7 @@ func newModel(cfg *config.Config, cfgPath string, mgr *daemon.Manager) *Model {
 	}
 	m.presets = cfg.PresetIDs()
 	m.models = cfg.ModelIDs()
+	m.groups = cfg.GroupIDs()
 	snap, _ := m.sys.Sample()
 	m.snap = snap
 	m.hist.Push(snap)
@@ -398,6 +410,16 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.setToast("smoke test: " + oneLine(msg.smoke.Err, 120))
 		}
 		return m, nil
+	case groupMsg:
+		m.busy = ""
+		summary, failed := groupSummary(msg.name, msg.results, msg.limit)
+		m.setToast(summary)
+		if len(failed) > 0 {
+			m.overlayTitle = "group " + msg.name
+			m.overlay = groupDetails(msg.results, msg.limit)
+			m.overlayScroll = 0
+		}
+		return m, m.refreshLater(150 * time.Millisecond)
 	case doctorMsg:
 		m.busy = ""
 		if msg.err != nil {
@@ -924,8 +946,10 @@ func (m *Model) reloadConfig() {
 	m.cfg = cfg
 	m.presets = cfg.PresetIDs()
 	m.models = cfg.ModelIDs()
+	m.groups = cfg.GroupIDs()
 	m.presetSel = indexOf(m.presets, oldPreset)
 	m.modelSel = indexOf(m.models, oldModel)
+	m.groupSel = clamp(m.groupSel, 0, maxInt(0, len(m.groups)-1))
 	if m.presetSel < 0 {
 		m.presetSel = 0
 	}

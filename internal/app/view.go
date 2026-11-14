@@ -1215,6 +1215,8 @@ func (m *Model) footerView() string {
 		hints = "m switch source · j/k select router model · L logs · B bench · ? help · q quit"
 	} else if m.tab == tabLogs {
 		hints = "j/k scroll · f follow · v raw/structured · m filter · enter target · ? help · q quit"
+	} else if m.tab == tabRouter {
+		hints = "l/u load/unload · w group · j/k select · r/R router · enter load · ? help · q quit"
 	} else {
 		if m.crash != nil {
 			hints = "S restart · x dismiss · tab switch · j/k move · / command · ? help · q quit"

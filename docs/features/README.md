@@ -27,7 +27,7 @@ Status values: `planned`, `in progress`, `shipped`, `blocked`, `dropped`.
 | M4.3 — Alerts | P1 | M | M4.1 | done | [m4-03-alerts.md](m4-03-alerts.md) |
 | M4.4 — Crash detection and restart policy | P1 | L | none | shipped | [m4-04-crash-detection-and-restart-policy.md](m4-04-crash-detection-and-restart-policy.md) |
 | M4.5 — Router eviction visualization | P2 | M | M2.1 | shipped | [m4-05-router-eviction-visualization.md](m4-05-router-eviction-visualization.md) |
-| M4.6 — Warm sets and profiles | P2 | M | M4.5 | planned | [m4-06-warm-sets-and-profiles.md](m4-06-warm-sets-and-profiles.md) |
+| M4.6 — Warm sets and profiles | P2 | M | M4.5 | shipped | [m4-06-warm-sets-and-profiles.md](m4-06-warm-sets-and-profiles.md) |
 | M4.7 — Router usage statistics | P2 | S/M | M1.3, M4.1 | planned | [m4-07-router-usage-statistics.md](m4-07-router-usage-statistics.md) |
 | M4.8 — Endpoint helper | P3 | S | none | planned | [m4-08-endpoint-helper.md](m4-08-endpoint-helper.md) |
 | M5.1 — Model discovery | P1 | M | none | planned | [m5-01-model-discovery.md](m5-01-model-discovery.md) |

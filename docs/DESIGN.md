@@ -163,6 +163,9 @@ alias = "display-name"
 model = "<model id>"         # required
 # any launch option, plus [presets.<name>.sampling] and [presets.<name>.extra]
 
+[groups.<name>]
+models = ["<model id>", ...] # warm set loaded in order by one action
+
 [router]
 models_max = 1
 memory_margin_mib = 512
@@ -451,6 +454,16 @@ Router status strings observed from the server are `unloaded`, `loading`,
 The default `models_max = 1` and 512 MiB margin suit the 8 GiB AMD card used
 during development. Autoload is off and sleep-on-idle is disabled, so an
 explicit load stays loaded until explicitly unloaded.
+
+Warm sets are named `[groups.*]` lists of model IDs. `wool router load-group
+NAME` and `w` in the Router tab load the models in order, wait for each to reach
+`loaded` or `sleeping`, continue after an error, and print a per-model summary.
+The router rejects a load for a model that is already running, so a resident
+model is reported as loaded without a second request; this makes a repeated
+group load idempotent. A group larger than `models_max` is warned about before
+it starts: the router keeps only the newest `models_max` models and evicts
+earlier members, so the CLI prints a warning and a closing note, and the TUI
+asks for confirmation.
 
 The Router tab predicts eviction from the count limit. The pinned router's
 `pick_victim` selects the idle model with the oldest `last_used` when

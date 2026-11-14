@@ -9,13 +9,19 @@ import (
 )
 
 var commandNames = []string{
-	"start", "restart", "stop", "dismiss", "router", "load", "unload", "reload",
+	"start", "restart", "stop", "dismiss", "router", "load", "unload", "load-group", "reload",
 	"edit", "fit", "doctor", "theme", "tab", "bench", "logs", "help", "quit",
 }
 
 func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.editor != nil {
 		return m.updateEditor(msg)
+	}
+	if m.groupWait != "" {
+		return m.updateGroupConfirm(msg)
+	}
+	if m.groupPick {
+		return m.updateGroupPicker(msg)
 	}
 	if m.overlay != "" {
 		switch msg.String() {
@@ -116,6 +122,12 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, m.routerAction(true)
 	case "u":
 		return m, m.routerAction(false)
+	case "w":
+		if m.tab != tabRouter {
+			m.setToast("groups are on the router tab")
+			return m, nil
+		}
+		m.openGroupPicker()
 	case "m":
 		switch m.tab {
 		case tabInference:

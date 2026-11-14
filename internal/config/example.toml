@@ -207,6 +207,17 @@ model = "lfm25-24b-a2b"
 ctx = 65536
 
 # ---------------------------------------------------------------------------
+# Warm sets
+# ---------------------------------------------------------------------------
+# A group is a named list of model IDs loaded together. `wool router
+# load-group NAME` and `w` in the Router tab load the models in order and keep
+# going after an error. If the group is larger than router.models_max, the
+# router evicts earlier models as later ones load; wool warns before starting.
+
+[groups.coding]
+models = ["qwen3-4b-cyber", "lfm3-1-7b"]
+
+# ---------------------------------------------------------------------------
 # Router
 # ---------------------------------------------------------------------------
 # Router mode loads models on demand from the generated models.ini.
