@@ -76,14 +76,17 @@ type Model struct {
 	routerHealth string
 	routerModels []llamaserver.Model
 	routerErr    string
-	stats        llamaserver.Metrics
-	slots        []llamaserver.Slot
-	statsID      string
-	statsErr     string // router-model scrape failure reason, "" when healthy
-	srvStats     llamaserver.Metrics
-	srvSlots     []llamaserver.Slot
-	srvStatsErr  string // standalone-server scrape failure reason
-	inf          inference
+	// routerLoadedAt records when a model was first seen resident, so the
+	// eviction view can approximate the router's LRU order.
+	routerLoadedAt map[string]time.Time
+	stats          llamaserver.Metrics
+	slots          []llamaserver.Slot
+	statsID        string
+	statsErr       string // router-model scrape failure reason, "" when healthy
+	srvStats       llamaserver.Metrics
+	srvSlots       []llamaserver.Slot
+	srvStatsErr    string // standalone-server scrape failure reason
+	inf            inference
 
 	presets     []string
 	models      []string
@@ -433,6 +436,7 @@ func (m *Model) applyTick(msg tickMsg) {
 	m.router, m.hasRouter = msg.router, msg.hasRouter
 	m.serverHealth, m.routerHealth = msg.serverHealth, msg.routerHealth
 	m.routerModels = msg.models
+	m.trackRouterResidency(msg.at)
 	m.routerErr = msg.routerErr
 	m.stats, m.slots, m.statsID = msg.stats, msg.slots, msg.statsID
 	m.statsErr = msg.statsErr

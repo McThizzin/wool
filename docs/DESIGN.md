@@ -452,6 +452,17 @@ The default `models_max = 1` and 512 MiB margin suit the 8 GiB AMD card used
 during development. Autoload is off and sleep-on-idle is disabled, so an
 explicit load stays loaded until explicitly unloaded.
 
+The Router tab predicts eviction from the count limit. The pinned router's
+`pick_victim` selects the idle model with the oldest `last_used` when
+`models_max` would be exceeded; `GET /models` does not expose `last_used`, so
+the TUI approximates LRU from the first poll that saw each model resident and
+labels the victim list `LRU approx.`. A busy model is never evicted, but the
+API does not expose per-model request counts, so the prediction cannot account
+for one. The memory margin is shown as configured; the pinned router evicts by
+count, not by the margin, and `--fit-target` uses the margin when sizing each
+child. Missing model estimates degrade to `unknown` instead of hiding the
+prediction.
+
 ## TUI
 
 ### Layout

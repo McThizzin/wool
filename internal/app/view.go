@@ -709,9 +709,7 @@ func (m *Model) routerBody(w, h int) []string {
 	if m.routerErr != "" {
 		lines = append(lines, st.Bad.Render("router: "+oneLine(m.routerErr, w-4)))
 	}
-	if len(m.routerModels) == 0 {
-		lines = append(lines, st.Muted.Render("no models reported by the router"))
-	}
+	lines = append(lines, m.routerSummary(w)...)
 	headers := fmt.Sprintf("%-24s %-10s %-8s %s", "MODEL", "STATUS", "CONTEXT", "TPS")
 	lines = append(lines, st.Header.Render(ui.Fit(headers, w-2)))
 	visible := h - len(lines) - 2
@@ -756,6 +754,92 @@ func (m *Model) routerBody(w, h int) []string {
 		if m.statsID == sel.ID && (sel.Status.Value == "loaded" || sel.Status.Value == "sleeping") {
 			lines = append(lines, m.statsLines(w)...)
 		}
+	}
+	return lines
+}
+
+// routerSummary shows the resident count, the models_max limit, the configured
+// memory margin and a best-effort eviction prediction for loading the selected
+// model. The victim order approximates the router's LRU clock from load time,
+// because the API does not expose last_used.
+func (m *Model) routerSummary(w int) []string {
+	st := m.render.Styles
+	limit := m.cfg.Router.ModelsMax
+	resident := make([]routerResidentModel, 0, len(m.routerModels))
+	var residentBytes uint64
+	residentKnown := true
+	for _, rm := range m.routerModels {
+		if !routerResident(rm) {
+			continue
+		}
+		r := routerResidentModel{ID: rm.ID, LoadedAt: m.routerLoadedAt[rm.ID]}
+		if fi := m.fitFor(rm.ID, "model"); fi.Ready {
+			r.Bytes, r.Known = fi.Est.Total, true
+			residentBytes += r.Bytes
+		} else {
+			residentKnown = false
+		}
+		resident = append(resident, r)
+	}
+
+	sel, hasSel := m.selectedRouterModel()
+	candidate := ""
+	var candidateBytes uint64
+	candidateKnown := false
+	if hasSel {
+		candidate = sel.ID
+		if fi := m.fitFor(candidate, "model"); fi.Ready {
+			candidateBytes, candidateKnown = fi.Est.Total, true
+		}
+	}
+	plan := predictRouterEviction(resident, candidate, candidateBytes, candidateKnown, limit)
+
+	count := fmt.Sprintf("resident %d", len(resident))
+	if limit > 0 {
+		count += fmt.Sprintf("/%d", limit)
+		if len(resident) > limit {
+			count += " (over limit)"
+		}
+	} else {
+		count += "/unlimited"
+	}
+	margin := fmt.Sprintf("%d MiB", maxInt(0, m.cfg.Router.MemoryMarginMiB))
+	summary := count + " · margin " + margin
+	if len(resident) > 0 {
+		if residentKnown {
+			summary += " · est " + ui.HumanBytes(residentBytes)
+		} else {
+			summary += " · est unknown"
+		}
+	}
+	style := st.Muted
+	if limit > 0 && len(resident) > limit {
+		style = st.Warn
+	}
+	lines := []string{style.Render(ui.Fit(summary, w-2))}
+
+	switch {
+	case len(m.routerModels) == 0:
+		lines = append(lines, st.Muted.Render("no models reported by the router"))
+	case !hasSel:
+		lines = append(lines, st.Muted.Render("select a model to predict eviction"))
+	case plan.Resident:
+		lines = append(lines, st.Muted.Render(ui.Fit(
+			"selected "+plan.Candidate+" is resident; no eviction predicted", w-2)))
+	default:
+		load := "loading " + plan.Candidate
+		if plan.CandidateKnown {
+			load += " (" + ui.HumanBytes(plan.CandidateBytes) + ")"
+		}
+		switch {
+		case len(plan.Victims) == 0:
+			load = "predicted eviction: none if " + load
+		case !plan.EstimatesKnown:
+			load = "predicted eviction: unknown (estimate missing) if " + load
+		default:
+			load = "predicted eviction: " + strings.Join(plan.Victims, ", ") + " (LRU approx.) if " + load
+		}
+		lines = append(lines, st.Muted.Render(ui.Fit(load, w-2)))
 	}
 	return lines
 }

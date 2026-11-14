@@ -19,6 +19,7 @@
 - **One TOML source of truth.** Models, presets, launch options, sampling, router settings, and themes all live in `config.toml`. There is no legacy `presets.conf` importer.
 - **Effective-config diff.** `wool config diff TARGET` and the TUI `D` overlay show only the launch options that differ from the model or defaults layer, with the source of each side.
 - **Full router control.** Start/stop the router, list models, load/unload, reload presets, and read per-model stats and slots.
+- **Eviction view.** The Router tab shows resident models against `models_max`, the configured memory margin, wool's estimate for the resident set, and a best-effort LRU prediction of what loading the selected model would evict. Missing estimates say `unknown`, and the victim is always labeled as a prediction.
 - **VRAM-fit estimates.** Reads GGUF metadata and the tensor table, models llama.cpp's tensor placement, Gemma-style sliding-window/shared KV, hybrid attention (Qwen3.5/Qwen3-Next), per-layer KV heads, and quantized KV cache types. The UI shows `weights + KV + overhead`, the budget after reserve and other GPU usage, headroom and the limiting term.
 - **Auto-fit recommendations.** `wool fit TARGET` binary-searches the largest context that fits the budget, capped at the model's native context. When the requested settings cannot hold a useful context it ranks fallbacks: lower KV cache precision first, then CPU offload (using `n_cpu_moe` for MoE models). Every recommendation is within budget and includes weights, KV, overhead, headroom, the limiting term and the changes it makes. `--save-preset NAME` writes the result as a new preset.
 - **Benchmarks and history.** `wool bench TARGET` starts an ephemeral server, warms up, and records prompt and generation throughput over repeated runs with median/min/max and peak VRAM. It can attach to a matching managed server or any `--url`, and optionally drive `llama-bench`. `wool bench history` and the Bench tab show past runs, trends and a two-run comparison. `wool bench compare A B` runs two targets interleaved and reports the median, spread and percentage delta.
@@ -443,6 +444,8 @@ wool router reload
 wool router stop
 ```
 
+The Router tab summarizes the resident set as `resident N/limit · margin N MiB · est SIZE`. It predicts the effect of loading the selected model: `predicted eviction: A, B (LRU approx.) if loading X (SIZE)`, `predicted eviction: none if loading X (SIZE)`, or `predicted eviction: unknown (estimate missing) if loading X`. The pinned `llama-server` router evicts idle models in LRU order when `models_max` would be exceeded; `GET /models` does not expose `last_used`, so the TUI approximates the order from when each model was first seen resident. Busy models are never evicted, and the prediction is not a guarantee.
+
 ## Runtime files
 
 ```text
@@ -502,7 +505,7 @@ go vet ./...
 go test -count=1 ./...
 ```
 
-Tests cover config parsing/merging/editing, effective-config diffs, GGUF metadata and tensor parsing, hybrid KV and MoE expert-offload estimation, dense/hybrid/MoE auto-fit solving and fallback ranking, measurement storage and capture, benchmark history filtering and store rotation, benchmark runners and `llama-bench` parsing, interleaved A/B comparison and its noise warnings, argv and INI generation, router metrics, alert thresholds, cooldowns, log fingerprints and notifier behaviour, crash classification, restart backoff/window handling, detached supervision and orphan cleanup, daemon lifecycle and PID validation, sysinfo parsing, themes, and TUI rendering at multiple terminal sizes. Benchmark tests use a fake HTTP server and temporary state; alert tests use a fake notifier and an injected clock; restart and supervisor tests use short-lived `/bin/sh` children, and none require `notify-send` or the network.
+Tests cover config parsing/merging/editing, effective-config diffs, GGUF metadata and tensor parsing, hybrid KV and MoE expert-offload estimation, dense/hybrid/MoE auto-fit solving and fallback ranking, measurement storage and capture, benchmark history filtering and store rotation, benchmark runners and `llama-bench` parsing, interleaved A/B comparison and its noise warnings, argv and INI generation, router metrics and eviction prediction, alert thresholds, cooldowns, log fingerprints and notifier behaviour, crash classification, restart backoff/window handling, detached supervision and orphan cleanup, daemon lifecycle and PID validation, sysinfo parsing, themes, and TUI rendering at multiple terminal sizes. Benchmark tests use a fake HTTP server and temporary state; alert tests use a fake notifier and an injected clock; restart and supervisor tests use short-lived `/bin/sh` children, and none require `notify-send` or the network.
 
 ## Limitations
 
