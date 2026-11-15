@@ -482,6 +482,22 @@ is unknown, the memory prediction degrades to `unknown` instead of claiming no
 eviction. `GET /props` does not expose the margin, so the TUI assumes the
 configured value.
 
+The Router tab also tracks per-model usage. On each poll it reads
+`/metrics?model=ID` for every resident model, sums counter deltas into prompt
+and generated tokens, counts a load when a model becomes resident, and records
+the last time a model served a token or had a request processing. A sleeping
+model answers `/metrics` from its cached counters; `/slots` is skipped for it
+because that endpoint asks llama-server to wake the model. A counter
+decrease reseeds the baseline instead of producing a negative delta. The
+tracker keys the router by PID and start ticks; a new key clears the baselines,
+increments a restart counter, and treats the new process's resident models as
+loads. Lifetime totals persist as a `usage` snapshot in the measurement store;
+session totals live in memory. The table shows lifetime `LOADS`, `TOKENS` and
+`LAST`, and the selected model prints both lifetime and session values. A model
+already resident when the TUI starts is seeded without counting a load, so
+restarting the TUI does not inflate the count. Usage is flushed at most every
+15 seconds while dirty and once more on a clean exit.
+
 ## TUI
 
 ### Layout
@@ -894,7 +910,8 @@ truth. Restarts re-sample the baseline after the old process stops.
 same capture as a background command so the 15s window never blocks input.
 Records are matched by model, context, cache types, GPU layers and
 `n_cpu_moe`; observations from a different launch shape are not compared.
-A corrupt line is skipped.
+A corrupt line is skipped. The same file also holds `kind: "usage"` snapshots
+for router model usage; they are not observations and never affect calibration.
 
 `Store.Calibration` groups observations by that launch shape and the current
 environment: model size and modtime, GPU PCI ID, GPU driver and
@@ -988,9 +1005,10 @@ returned.
 The store is bounded by record count rather than bytes: `DefaultMaxRecords` is
 5000. `Append` writes the line, then compacts best-effort while holding a
 sibling `runs.jsonl.lock` file with `syscall.Flock`. Compaction reads the file,
-keeps the newest records, writes a temporary file in the same directory, and
-renames it over the original. A failed compaction leaves a larger file but does
-not turn a durable append into an error. The lock matters because compaction
+keeps the newest non-usage records plus the newest usage snapshot, writes a
+temporary file in the same directory, and renames it over the original. A
+failed compaction leaves a larger file but does not turn a durable append into
+an error. The lock matters because compaction
 rewrites the whole file and must not race an append from another wool process.
 
 The TUI Bench tab reloads on the normal poll tick and when the tab opens. It
@@ -1200,8 +1218,8 @@ criteria. The limitations below are the current state, not the plan.
   sentence rather than tokenizing. Peak VRAM is a sampled system-wide delta and
   is noisy when other GPU work runs; an arbitrary `--url` server cannot report a
   delta at all.
-- The measurement store is capped at 5000 records. Old runs are dropped without
-  warning, and a two-run comparison only diffs the launch fields wool recorded;
-  it is not a statistical test. A/B comparison uses the same coarse 10% spread
-  guard for its noise warning, so a small delta on a shared machine can still be
-  noise even when no warning is shown.
+- The measurement store is capped at 5000 non-usage records. Old runs are
+  dropped without warning, and a two-run comparison only diffs the launch
+  fields wool recorded; it is not a statistical test. A/B comparison uses the
+  same coarse 10% spread guard for its noise warning, so a small delta on a
+  shared machine can still be noise even when no warning is shown.

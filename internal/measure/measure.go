@@ -1,8 +1,9 @@
 // Package measure records observed VRAM next to the estimate.
 //
-// Records are append-only JSONL: one line per successful launch. A corrupt
-// line is skipped rather than failing the whole store, because the file is
-// written by more than one wool process over time.
+// Records are append-only JSONL: one line per successful launch, benchmark or
+// router-usage snapshot. A corrupt line is skipped rather than failing the
+// whole store, because the file is written by more than one wool process over
+// time.
 package measure
 
 import (
@@ -83,6 +84,7 @@ type Record struct {
 
 	ConfigHash string `json:"config_hash,omitempty"`
 	Bench      *Bench `json:"bench,omitempty"`
+	Usage      *Usage `json:"usage,omitempty"`
 }
 
 // Bench is the engine-independent result of a benchmark. Record fields still
@@ -239,8 +241,10 @@ func (s *Store) lock() (func(), error) {
 	}, nil
 }
 
-// compactLocked rewrites the store when it holds more than maxRecords. The
-// caller must hold the store lock.
+// compactLocked rewrites the store when it holds more than maxRecords. Usage
+// snapshots are kept out of the cap: only the newest one is retained, so a
+// frequently flushed usage record cannot evict observations or benchmarks.
+// The caller must hold the store lock.
 func (s *Store) compactLocked() error {
 	if maxRecords <= 0 {
 		return nil
@@ -249,13 +253,29 @@ func (s *Store) compactLocked() error {
 	if err != nil {
 		return err
 	}
-	if len(records) <= maxRecords {
+	var usage *Record
+	nonUsage := make([]Record, 0, len(records))
+	for i := range records {
+		if records[i].Kind == KindUsage {
+			r := records[i]
+			usage = &r
+			continue
+		}
+		nonUsage = append(nonUsage, records[i])
+	}
+	if len(nonUsage) > maxRecords {
+		nonUsage = nonUsage[len(nonUsage)-maxRecords:]
+	}
+	out := nonUsage
+	if usage != nil {
+		out = append(out, *usage)
+	}
+	if len(out) == len(records) {
 		return nil
 	}
-	records = records[len(records)-maxRecords:]
 
 	var buf bytes.Buffer
-	for _, r := range records {
+	for _, r := range out {
 		b, err := json.Marshal(r)
 		if err != nil {
 			return err
@@ -318,11 +338,16 @@ func (s *Store) All() ([]Record, error) {
 		if err := json.Unmarshal(line, &r); err != nil {
 			continue
 		}
-		if r.Version != Version || r.ModelID == "" {
+		if r.Version != Version {
 			continue
 		}
 		if r.Kind == "" {
 			r.Kind = KindObservation
+		}
+		// Usage snapshots are not tied to a model ID. Every other record
+		// needs one to be useful.
+		if r.ModelID == "" && r.Kind != KindUsage {
+			continue
 		}
 		out = append(out, r)
 	}

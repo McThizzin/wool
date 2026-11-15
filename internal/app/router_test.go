@@ -7,6 +7,7 @@ import (
 
 	"wool/internal/gguf"
 	"wool/internal/llamaserver"
+	"wool/internal/measure"
 )
 
 func TestPredictRouterEvictionAtLimit(t *testing.T) {
@@ -252,6 +253,73 @@ func TestRouterSummaryMemoryMargin(t *testing.T) {
 	} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("summary missing %q:\n%s", want, out)
+		}
+	}
+}
+
+func TestRouterBodyShowsUsage(t *testing.T) {
+	m := testModel(t)
+	m.hasRouter = true
+	now := time.Now()
+	m.routerModels = []llamaserver.Model{
+		{ID: "alpha", Status: llamaserver.ModelStatus{Value: "loaded"}},
+		{ID: "beta", Status: llamaserver.ModelStatus{Value: "unloaded"}},
+	}
+	m.routerSel = 0
+	m.usage.loaded = true
+	m.usage.life = measure.Usage{
+		Router: measure.RouterUsage{Restarts: 2},
+		Models: map[string]measure.ModelUsage{
+			"alpha": {ID: "alpha", Loads: 3, PromptTokens: 1200, GenTokens: 345, LastUsed: now.Add(-2 * time.Minute)},
+			"beta":  {ID: "beta", Loads: 1, PromptTokens: 50, GenTokens: 10, LastUsed: now.Add(-3 * time.Hour)},
+		},
+	}
+	m.usage.session = measure.Usage{Models: map[string]measure.ModelUsage{
+		"alpha": {ID: "alpha", Loads: 1, PromptTokens: 200, GenTokens: 45},
+	}}
+
+	out := strings.Join(m.routerBody(160, 24), "\n")
+	for _, want := range []string{
+		"LOADS", "TOKENS", "LAST",
+		"alpha", "1.5k", "2m",
+		"usage lifetime: 3 loads · 1.2k in / 345 out · last used 2m",
+		"usage session: 1 loads · 200 in / 45 out",
+		"router restarts recorded: 2",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("router body missing %q:\n%s", want, out)
+		}
+	}
+}
+
+func TestHumanTokenCountAndRelativeAge(t *testing.T) {
+	for _, tc := range []struct {
+		n    uint64
+		want string
+	}{
+		{0, "0"},
+		{999, "999"},
+		{1500, "1.5k"},
+		{2_500_000, "2.5M"},
+		{3_000_000_000, "3.0G"},
+	} {
+		if got := humanTokenCount(tc.n); got != tc.want {
+			t.Errorf("humanTokenCount(%d) = %q, want %q", tc.n, got, tc.want)
+		}
+	}
+	now := time.Unix(1_700_000_000, 0)
+	for _, tc := range []struct {
+		at   time.Time
+		want string
+	}{
+		{time.Time{}, "never"},
+		{now.Add(-30 * time.Second), "just now"},
+		{now.Add(-5 * time.Minute), "5m"},
+		{now.Add(-3 * time.Hour), "3h"},
+		{now.Add(-48 * time.Hour), "2d"},
+	} {
+		if got := relativeAge(tc.at, now); got != tc.want {
+			t.Errorf("relativeAge(%v) = %q, want %q", tc.at, got, tc.want)
 		}
 	}
 }

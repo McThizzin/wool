@@ -705,14 +705,38 @@ func (m *Model) routerBody(w, h int) []string {
 			st.Muted.Render("The router loads one model at a time from the generated models.ini."),
 		}
 	}
+	now := time.Now()
 	var lines []string
 	if m.routerErr != "" {
 		lines = append(lines, st.Bad.Render("router: "+oneLine(m.routerErr, w-4)))
 	}
 	lines = append(lines, m.routerSummary(w)...)
-	headers := fmt.Sprintf("%-24s %-10s %-8s %s", "MODEL", "STATUS", "CONTEXT", "TPS")
+	headers := fmt.Sprintf("%-24s %-10s %-8s %-6s %-5s %-8s %s",
+		"MODEL", "STATUS", "CONTEXT", "TPS", "LOADS", "TOKENS", "LAST")
 	lines = append(lines, st.Header.Render(ui.Fit(headers, w-2)))
-	visible := h - len(lines) - 2
+
+	footer := []string{""}
+	sel, ok := m.selectedRouterModel()
+	if ok {
+		footer = append(footer, st.Muted.Render(fmt.Sprintf("selected %s · enter load · u unload · m metrics", sel.ID)))
+		life := m.usage.life.Lookup(sel.ID)
+		session := m.usage.session.Lookup(sel.ID)
+		footer = append(footer, st.Muted.Render(ui.Fit(fmt.Sprintf(
+			"usage lifetime: %d loads · %s in / %s out · last used %s",
+			life.Loads, humanTokenCount(life.PromptTokens), humanTokenCount(life.GenTokens),
+			relativeAge(life.LastUsed, now)), w-2)))
+		footer = append(footer, st.Muted.Render(ui.Fit(fmt.Sprintf(
+			"usage session: %d loads · %s in / %s out",
+			session.Loads, humanTokenCount(session.PromptTokens), humanTokenCount(session.GenTokens)), w-2)))
+		if n := m.usage.life.Router.Restarts; n > 0 {
+			footer = append(footer, st.Muted.Render(fmt.Sprintf("router restarts recorded: %d", n)))
+		}
+		if m.statsID == sel.ID && routerResident(sel) {
+			footer = append(footer, m.statsLines(w)...)
+		}
+	}
+
+	visible := h - len(lines) - len(footer)
 	start := windowStart(m.routerSel, visible, len(m.routerModels))
 	for i := start; i < len(m.routerModels) && i-start < visible; i++ {
 		rm := m.routerModels[i]
@@ -729,7 +753,11 @@ func (m *Model) routerBody(w, h int) []string {
 				ctx = fmt.Sprintf("%d/%d", m.slots[0].NPast, m.slots[0].NCtx)
 			}
 		}
-		line := fmt.Sprintf("%-24s %-10s %-8s %s", truncate(rm.ID, 24), status, ctx, tps)
+		usage := m.usage.life.Lookup(rm.ID)
+		line := fmt.Sprintf("%-24s %-10s %-8s %-6s %-5d %-8s %s",
+			truncate(rm.ID, 24), truncate(status, 10), truncate(ctx, 8), truncate(tps, 6),
+			usage.Loads, humanTokenCount(usage.PromptTokens+usage.GenTokens),
+			truncate(relativeAge(usage.LastUsed, now), 8))
 		style := st.Plain
 		switch status {
 		case "loaded":
@@ -747,15 +775,7 @@ func (m *Model) routerBody(w, h int) []string {
 			lines = append(lines, style.Render(ui.Fit(" "+line, w-2)))
 		}
 	}
-	lines = append(lines, "")
-	sel, ok := m.selectedRouterModel()
-	if ok {
-		lines = append(lines, st.Muted.Render(fmt.Sprintf("selected %s · enter load · u unload · m metrics", sel.ID)))
-		if m.statsID == sel.ID && (sel.Status.Value == "loaded" || sel.Status.Value == "sleeping") {
-			lines = append(lines, m.statsLines(w)...)
-		}
-	}
-	return lines
+	return append(lines, footer...)
 }
 
 // routerSummary shows the resident count, the models_max limit, the configured
@@ -1380,6 +1400,38 @@ func humanTokens(n int) string {
 		return fmt.Sprintf("%.1fk", float64(n)/1e3)
 	default:
 		return fmt.Sprintf("%d", n)
+	}
+}
+
+// humanTokenCount is the uint64 form used for persisted usage counters.
+func humanTokenCount(n uint64) string {
+	switch {
+	case n >= 1_000_000_000:
+		return fmt.Sprintf("%.1fG", float64(n)/1e9)
+	case n >= 1_000_000:
+		return fmt.Sprintf("%.1fM", float64(n)/1e6)
+	case n >= 1_000:
+		return fmt.Sprintf("%.1fk", float64(n)/1e3)
+	default:
+		return fmt.Sprintf("%d", n)
+	}
+}
+
+// relativeAge renders a last-used time as a short age for the router table.
+func relativeAge(t, now time.Time) string {
+	if t.IsZero() {
+		return "never"
+	}
+	d := now.Sub(t)
+	switch {
+	case d < time.Minute:
+		return "just now"
+	case d < time.Hour:
+		return fmt.Sprintf("%dm", int(d.Minutes()))
+	case d < 24*time.Hour:
+		return fmt.Sprintf("%dh", int(d.Hours()))
+	default:
+		return fmt.Sprintf("%dd", int(d.Hours()/24))
 	}
 }
 

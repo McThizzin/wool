@@ -21,6 +21,7 @@
 - **Full router control.** Start/stop the router, list models, load/unload, reload presets, and read per-model stats and slots.
 - **Warm sets.** Named `[groups.*]` lists load together with one command or one key, continue after a failure, and report exactly which models failed. Groups larger than `models_max` warn before starting.
 - **Eviction view.** The Router tab shows resident models against `models_max`, the configured memory margin, wool's estimate for the resident set, and a best-effort LRU prediction of what loading the selected model would evict under the count limit or the memory margin. Missing estimates say `unknown`, and the victim is always labeled as a prediction.
+- **Router usage stats.** The Router tab records loads, prompt/generated tokens and last-used time per router model from the existing polls and `/metrics` deltas. Lifetime totals survive a TUI restart, session totals are shown separately, and a router restart is counted instead of producing negative deltas.
 - **VRAM-fit estimates.** Reads GGUF metadata and the tensor table, models llama.cpp's tensor placement, Gemma-style sliding-window/shared KV, hybrid attention (Qwen3.5/Qwen3-Next), per-layer KV heads, and quantized KV cache types. The UI shows `weights + KV + overhead`, the budget after reserve and other GPU usage, headroom and the limiting term.
 - **Auto-fit recommendations.** `wool fit TARGET` binary-searches the largest context that fits the budget, capped at the model's native context. When the requested settings cannot hold a useful context it ranks fallbacks: lower KV cache precision first, then CPU offload (using `n_cpu_moe` for MoE models). Every recommendation is within budget and includes weights, KV, overhead, headroom, the limiting term and the changes it makes. `--save-preset NAME` writes the result as a new preset.
 - **Benchmarks and history.** `wool bench TARGET` starts an ephemeral server, warms up, and records prompt and generation throughput over repeated runs with median/min/max and peak VRAM. It can attach to a matching managed server or any `--url`, and optionally drive `llama-bench`. `wool bench history` and the Bench tab show past runs, trends and a two-run comparison. `wool bench compare A B` runs two targets interleaved and reports the median, spread and percentage delta.
@@ -181,10 +182,11 @@ wool bench --url http://127.0.0.1:8080 --model qwen-cyber-32k --json
 (default 20) with timestamp, target, prompt and generation tokens/s, VRAM, load
 time and config hash. A target may be a preset name or model ID; omit it to show
 every benchmark. `--limit N` changes the row count and `--json` prints the
-matching records. The store keeps the newest 5000 records: after an append pushes
-it over the cap, the oldest lines are dropped and the file is rewritten
-atomically. Writers serialize on `runs.jsonl.lock`, so a benchmark in one process
-cannot race a rotation in another.
+matching records. The store keeps the newest 5000 non-usage records plus the
+newest router-usage snapshot: after an append pushes it over the cap, the oldest
+lines are dropped and the file is rewritten atomically. Writers serialize on
+`runs.jsonl.lock`, so a benchmark in one process cannot race a rotation in
+another.
 
 ```sh
 wool bench history
@@ -459,6 +461,8 @@ models = ["qwen3-4b-cyber", "lfm3-1-7b"]
 
 The Router tab summarizes the resident set as `resident N/limit · margin N MiB · est SIZE`. It predicts the effect of loading the selected model: `predicted eviction: A, B (LRU approx.) if loading X (SIZE)`, `predicted eviction: none if loading X (SIZE)`, or `predicted eviction: unknown (estimate missing) if loading X`. When the router reports per-model memory, the margin is marked `(enforced)` and the prediction uses the router's measurements: it evicts idle models in LRU order until the candidate fits both `models_max` and the margin. Sleeping models keep their slot but release memory. `GET /models` does not expose `last_used`, so the TUI approximates the order from when each model was first seen resident. Busy models are never evicted, and the prediction is not a guarantee.
 
+The Router tab also records usage per model. Every poll reads `/metrics?model=ID` for each resident model and turns counter deltas into prompt and generated tokens; a load is counted when a model becomes resident, and last-used is set when a model serves tokens or has a request processing. Sleeping models serve cached metrics, so usage polling does not wake them. The table shows lifetime `LOADS`, `TOKENS` and `LAST`, while the selected model prints both lifetime and session values. Lifetime totals are persisted in the measurement store as a single `usage` snapshot, so they survive a TUI restart; session totals start at zero for each TUI process. A model that is already resident when the TUI starts is not counted as a new load. A new router process is detected from its PID and start tick: the tracker records a restart and reseeds the metric baselines instead of reporting a negative delta.
+
 ## Runtime files
 
 ```text
@@ -468,11 +472,11 @@ The Router tab summarizes the resident set as `resident N/limit · margin N MiB 
   logs/server.log
   logs/router.log
   router/models.ini         # generated, do not edit
-  measurements/runs.jsonl   # observations and benchmarks, append-only
+  measurements/runs.jsonl   # observations, benchmarks and router usage
   measurements/runs.jsonl.lock  # writer lock for safe rotation
 ```
 
-Logs are tailed from disk with a bounded read, so reattaching is cheap even for large logs. The measurement store keeps the newest 5000 records; older lines are compacted away after an append.
+Logs are tailed from disk with a bounded read, so reattaching is cheap even for large logs. The measurement store keeps the newest 5000 non-usage records plus the newest router-usage snapshot; older lines are compacted away after an append.
 
 ## VRAM estimate
 
@@ -532,7 +536,7 @@ Tests cover config parsing/merging/editing, group warm sets, effective-config di
 - Observations and benchmark peak VRAM are system-wide deltas; background GPU work makes them noisy. They are never presented as exact usage, and an arbitrary `--url` server cannot report a VRAM delta.
 - Benchmarks are single-stream and short by default. They measure one fixed prompt rather than concurrent load, and prompt length is approximated by repeating a sentence instead of tokenizing.
 - A/B comparison warns when spread is above 10%, but that is a coarse guard, not a significance test. Small deltas on a shared machine can still be noise; use more rounds before trusting them.
-- The measurement store is bounded at 5000 records. The oldest runs are dropped without warning; export anything you need to keep with `wool bench history --json`.
+- The measurement store is bounded at 5000 non-usage records. The oldest runs are dropped without warning; export anything you need to keep with `wool bench history --json`. Router usage is a single latest snapshot and does not count toward the cap.
 - Alerts are best effort and opt-in. They sample the current poll rather than a long history, deduplicate per rule and subject, and do not persist across TUI restarts. A missing `notify-send` is ignored, and webhook delivery has a short timeout; neither is a durable notification channel.
 
 See [`docs/DESIGN.md`](docs/DESIGN.md) for the full design, lifecycle, and config reference, and [`docs/roadmap.md`](docs/roadmap.md) for what is planned and in what order.

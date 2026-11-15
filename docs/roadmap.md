@@ -474,7 +474,7 @@ boundary.
 | M4.4 | [Crash detection and restart policy](features/m4-04-crash-detection-and-restart-policy.md) | M4 | P1 | L | — | shipped |
 | M4.5 | [Router eviction visualization](features/m4-05-router-eviction-visualization.md) | M4 | P2 | M | M2.1 | shipped |
 | M4.6 | [Warm sets and profiles](features/m4-06-warm-sets-and-profiles.md) | M4 | P2 | M | M4.5 | shipped |
-| M4.7 | [Router usage statistics](features/m4-07-router-usage-statistics.md) | M4 | P2 | S/M | M1.3, M4.1 | planned |
+| M4.7 | [Router usage statistics](features/m4-07-router-usage-statistics.md) | M4 | P2 | S/M | M1.3, M4.1 | shipped |
 | M4.8 | [Endpoint helper](features/m4-08-endpoint-helper.md) | M4 | P3 | S | — | planned |
 | M5.1 | [Model discovery](features/m5-01-model-discovery.md) | M5 | P1 | M | — | planned |
 | M5.2 | [Disk and orphan view](features/m5-02-disk-and-orphan-view.md) | M5 | P2 | S | M5.1 | planned |

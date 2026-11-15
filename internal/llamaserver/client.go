@@ -393,11 +393,11 @@ func (c *Client) Metrics(ctx context.Context, model string) (Metrics, error) {
 	return ParseMetrics(text), nil
 }
 
-// ScrapeInference fetches /metrics and /slots for one target and classifies
-// failures for display. The returned reason is empty when the metrics scrape
-// succeeded; when it failed, slots are still returned if /slots works, so a
-// metrics-disabled server can show occupancy.
-func (c *Client) ScrapeInference(ctx context.Context, model string) (Metrics, []Slot, string) {
+// ScrapeMetrics fetches /metrics for one target and classifies a failure for
+// display. It does not touch /slots, so it is safe for a sleeping router model:
+// llama-server serves cached metrics while sleeping, but /slots asks the model
+// to wake up.
+func (c *Client) ScrapeMetrics(ctx context.Context, model string) (Metrics, string) {
 	var m Metrics
 	var reason string
 	st, err := c.Metrics(ctx, model)
@@ -409,6 +409,16 @@ func (c *Client) ScrapeInference(ctx context.Context, model string) (Metrics, []
 	default:
 		m = st
 	}
+	return m, reason
+}
+
+// ScrapeInference fetches /metrics and /slots for one target and classifies
+// failures for display. The returned reason is empty when the metrics scrape
+// succeeded; when it failed, slots are still returned if /slots works, so a
+// metrics-disabled server can show occupancy. Do not call it for a sleeping
+// router model: /slots wakes the model.
+func (c *Client) ScrapeInference(ctx context.Context, model string) (Metrics, []Slot, string) {
+	m, reason := c.ScrapeMetrics(ctx, model)
 	var slots []Slot
 	if sl, err := c.Slots(ctx, model); err == nil {
 		slots = sl

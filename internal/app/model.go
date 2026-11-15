@@ -57,6 +57,7 @@ type Model struct {
 	sys     *sysinfo.Collector
 	hist    *sysinfo.History
 	meas    *measure.Store
+	usage   usageTracker
 	render  ui.Renderer
 
 	width, height int
@@ -196,6 +197,8 @@ type tickMsg struct {
 	serverHealth string
 	routerHealth string
 	models       []llamaserver.Model
+	modelsOK     bool
+	usage        map[string]llamaserver.Metrics
 	routerErr    string
 	stats        llamaserver.Metrics
 	slots        []llamaserver.Slot
@@ -258,6 +261,7 @@ func Run(cfg *config.Config, cfgPath string) error {
 	m := New(cfg, cfgPath)
 	p := tea.NewProgram(m, tea.WithAltScreen())
 	_, err := p.Run()
+	m.usage.flushNow(m.meas, time.Now())
 	return err
 }
 
@@ -459,6 +463,10 @@ func (m *Model) applyTick(msg tickMsg) {
 	m.serverHealth, m.routerHealth = msg.serverHealth, msg.routerHealth
 	m.routerModels = msg.models
 	m.trackRouterResidency(msg.at)
+	if msg.modelsOK {
+		m.usage.track(m.meas, msg.at, msg.router, msg.models, msg.usage)
+	}
+	m.usage.flush(m.meas, msg.at)
 	m.routerErr = msg.routerErr
 	m.stats, m.slots, m.statsID = msg.stats, msg.slots, msg.statsID
 	m.statsErr = msg.statsErr
@@ -563,18 +571,48 @@ func (m *Model) refreshLater(delay time.Duration) tea.Cmd {
 					msg.routerErr = err.Error()
 				} else {
 					sort.Slice(mm, func(i, j int) bool { return mm[i].ID < mm[j].ID })
-					msg.models = mm
+					msg.models, msg.modelsOK = mm, true
 					msg.statsID = selected
 					if selected != "" {
 						for _, rm := range mm {
 							if rm.ID != selected {
 								continue
 							}
-							if rm.Status.Value == "loaded" || rm.Status.Value == "sleeping" {
-								msg.stats, msg.slots, msg.statsErr = c.ScrapeInference(ctx, selected)
+							if routerResident(rm) {
+								if rm.Status.Value == "loaded" {
+									msg.stats, msg.slots, msg.statsErr = c.ScrapeInference(ctx, selected)
+								} else {
+									// A sleeping model serves cached metrics but
+									// /slots would wake it.
+									msg.stats, msg.statsErr = c.ScrapeMetrics(ctx, selected)
+								}
 							}
 							break
 						}
+					}
+					// Usage only needs counters. Use /metrics directly for
+					// sleeping models so a poll never wakes them.
+					msg.usage = map[string]llamaserver.Metrics{}
+					metricsOff := msg.statsErr != ""
+					for _, rm := range mm {
+						if !routerResident(rm) {
+							continue
+						}
+						if rm.ID == selected && !metricsOff {
+							msg.usage[rm.ID] = msg.stats
+							continue
+						}
+						if metricsOff {
+							continue
+						}
+						m, err := c.Metrics(ctx, rm.ID)
+						if err != nil {
+							if errors.Is(err, llamaserver.ErrMetricsDisabled) {
+								metricsOff = true
+							}
+							continue
+						}
+						msg.usage[rm.ID] = m
 					}
 				}
 				cancel()

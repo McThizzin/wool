@@ -46,10 +46,11 @@ wool bench history [TARGET] [--limit 20] [--json]
 **Implementation notes.** `Store.BenchHistory` returns matching runs oldest
 first and applies the newest-`limit` cut after filtering. `BenchTargets` and
 `BenchTargetName` provide the filter list and display label. Rotation keeps the
-newest 5000 records and runs best-effort after the append is durable, so a failed
-compaction never loses the record that was just written. Compaction rewrites via
-a temporary file and rename; the `.lock` file prevents an append in another wool
-process from racing the rewrite. The TUI reloads history on its normal poll tick
+newest 5000 non-usage records plus the newest router-usage snapshot and runs
+best-effort after the append is durable, so a failed compaction never loses the
+record that was just written. Compaction rewrites via a temporary file and
+rename; the `.lock` file prevents an append in another wool process from racing
+the rewrite. The TUI reloads history on its normal poll tick
 and when the tab opens, so a `wool bench` run in another terminal appears without
 restarting the UI.
 

@@ -131,6 +131,28 @@ func TestMetricsDisabled(t *testing.T) {
 	}
 }
 
+func TestScrapeMetricsDoesNotTouchSlots(t *testing.T) {
+	slots := 0
+	c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/metrics":
+			io.WriteString(w, "llamacpp:prompt_tokens_total 10\n")
+		case "/slots":
+			slots++
+			io.WriteString(w, `[]`)
+		default:
+			t.Errorf("unexpected path %s", r.URL.Path)
+		}
+	})
+	m, reason := c.ScrapeMetrics(context.Background(), "a")
+	if reason != "" || m.PromptTokens != 10 {
+		t.Fatalf("metrics = %+v reason = %q", m, reason)
+	}
+	if slots != 0 {
+		t.Fatalf("/slots was called %d times; scraping metrics must not wake a sleeping model", slots)
+	}
+}
+
 func TestScrapeInferenceClassifiesFailures(t *testing.T) {
 	scrapes := 0
 	c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
