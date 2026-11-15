@@ -128,7 +128,8 @@ func RouterArgs(cfg *config.Config, host string, port int, iniPath string) []str
 		args = append(args, "--metrics")
 	}
 	if cfg.Router.MemoryMarginMiB > 0 {
-		args = append(args, "--fit-target", strconv.Itoa(cfg.Router.MemoryMarginMiB))
+		margin := strconv.Itoa(cfg.Router.MemoryMarginMiB)
+		args = append(args, "--fit-target", margin, "--models-memory-margin", margin)
 	}
 	return append(args, cfg.Router.ExtraArgs...)
 }

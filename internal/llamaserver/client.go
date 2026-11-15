@@ -114,13 +114,69 @@ type ModelStatus struct {
 
 // Model is one entry from GET /models.
 type Model struct {
-	ID      string      `json:"id"`
-	Aliases []string    `json:"aliases"`
-	Tags    []string    `json:"tags"`
-	Object  string      `json:"object"`
-	OwnedBy string      `json:"owned_by"`
-	Created int64       `json:"created"`
-	Status  ModelStatus `json:"status"`
+	ID      string       `json:"id"`
+	Aliases []string     `json:"aliases"`
+	Tags    []string     `json:"tags"`
+	Object  string       `json:"object"`
+	OwnedBy string       `json:"owned_by"`
+	Created int64        `json:"created"`
+	Status  ModelStatus  `json:"status"`
+	Memory  *ModelMemory `json:"memory,omitempty"`
+}
+
+// ModelMemory is the router's memory report for one model. The router only
+// includes it when it was started with a positive --models-memory-margin.
+type ModelMemory struct {
+	Status    string            `json:"status"`
+	Min       *ModelMemoryUsage `json:"min"`
+	Max       *ModelMemoryUsage `json:"max"`
+	Effective *ModelMemoryUsage `json:"effective"`
+}
+
+// ModelMemoryUsage is one measurement at a context size.
+type ModelMemoryUsage struct {
+	NCtx    uint32              `json:"n_ctx"`
+	Devices []ModelMemoryDevice `json:"devices"`
+}
+
+// ModelMemoryDevice is the memory a model holds by buffer kind. Total and Free
+// are set only for device entries.
+type ModelMemoryDevice struct {
+	Kind    string `json:"kind"`
+	Name    string `json:"name"`
+	Total   uint64 `json:"total"`
+	Free    uint64 `json:"free"`
+	Model   uint64 `json:"model"`
+	Context uint64 `json:"context"`
+	Compute uint64 `json:"compute"`
+}
+
+// IsDevice reports whether the entry describes device memory.
+func (d ModelMemoryDevice) IsDevice() bool { return d.Kind == "device" }
+
+// Self is the memory the model holds for this entry.
+func (d ModelMemoryDevice) Self() uint64 { return d.Model + d.Context + d.Compute }
+
+// SelfBytes returns the bytes the model holds across its devices. Multi-device
+// measurements return false because the router applies the margin per device,
+// which this single total cannot represent.
+func (u *ModelMemoryUsage) SelfBytes() (uint64, bool) {
+	if u == nil {
+		return 0, false
+	}
+	var total uint64
+	devices := 0
+	for _, d := range u.Devices {
+		if !d.IsDevice() || d.Total == 0 {
+			continue
+		}
+		total += d.Self()
+		devices++
+	}
+	if devices != 1 {
+		return 0, false
+	}
+	return total, true
 }
 
 // Routed reports whether the model has been loaded at least once.

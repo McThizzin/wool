@@ -21,7 +21,7 @@ policy.
 - [x] Shows resident count, limit, margin and candidate.
 - [x] The prediction is labeled and never presented as a guarantee.
 - [x] Missing estimates degrade to “unknown”.
-- [x] Tests cover at-limit, over-limit and empty states.
+- [x] Tests cover at-limit, over-limit, empty and memory-pressure states.
 
 **Implementation notes.**
 
@@ -35,15 +35,22 @@ policy.
   `predicted eviction: unknown (estimate missing) if loading X`. A resident
   selection says so instead.
 - The pinned llama.cpp router evicts idle models in LRU order when
-  `models_max` would be exceeded. `GET /models` does not expose `last_used`, so
-  the TUI approximates the order from when each model was first seen resident;
-  the victim list is always labeled `LRU approx.` and is not a guarantee.
+  `models_max` would be exceeded or the memory margin would be breached.
+  `GET /models` does not expose `last_used`, so the TUI approximates the order
+  from when each model was first seen resident; the victim list is always
+  labeled `LRU approx.` and is not a guarantee.
 - Busy models are never evicted by the router. The API does not expose
   per-model request counts, so the prediction cannot account for a busy model;
   the router waits for it to go idle instead.
-- The memory margin is shown as configured. The pinned router limits eviction
-  by model count, not by the margin; `--fit-target` uses the margin when sizing
-  each child.
+- With a positive `memory_margin_mib`, wool passes both `--fit-target` and
+  `--models-memory-margin`. The router then includes a `memory` object per model
+  in `GET /models`, and the TUI marks the margin `(enforced)`. The prediction
+  prefers the router's `effective` measurement, then `min`, over wool's
+  estimate, and simulates LRU eviction until the candidate fits both the count
+  limit and the margin. A sleeping model keeps its slot but releases memory, so
+  it counts as zero bytes. If the candidate size or free VRAM is unknown, the
+  memory prediction degrades to `unknown`. `GET /props` does not expose the
+  margin, so the TUI assumes the configured value.
 - The selected model's estimate comes from the same `fitFor` cache as the
   Models and Presets tabs, so a missing GGUF or an unknown architecture
   degrades to `unknown` rather than failing the tab.

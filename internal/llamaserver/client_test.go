@@ -80,6 +80,46 @@ func TestModelsAndActions(t *testing.T) {
 	}
 }
 
+func TestModelsMemoryParse(t *testing.T) {
+	c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, `{"data":[{"id":"a","status":{"value":"loaded"},"memory":{"status":"measured","min":{"n_ctx":4096,"devices":[{"kind":"device","name":"card1","total":8589934592,"free":6442450944,"model":3221225472,"context":536870912,"compute":268435456}]},"effective":{"n_ctx":4096,"devices":[{"kind":"device","name":"card1","total":8589934592,"free":6442450944,"model":3221225472,"context":536870912,"compute":268435456}]}}}]}`)
+	})
+	models, err := c.Models(context.Background(), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(models) != 1 || models[0].Memory == nil {
+		t.Fatalf("models = %+v", models)
+	}
+	if got := models[0].Memory.Status; got != "measured" {
+		t.Fatalf("status = %q", got)
+	}
+	b, ok := models[0].Memory.Effective.SelfBytes()
+	want := uint64(3<<30 + 512<<20 + 256<<20)
+	if !ok || b != want {
+		t.Fatalf("effective self = %d/%v, want %d", b, ok, want)
+	}
+}
+
+func TestModelMemorySelfBytes(t *testing.T) {
+	// Multi-device measurements are not a single total.
+	u := &ModelMemoryUsage{Devices: []ModelMemoryDevice{
+		{Kind: "device", Total: 1, Model: 100},
+		{Kind: "device", Total: 1, Model: 200},
+	}}
+	if _, ok := u.SelfBytes(); ok {
+		t.Fatal("multi-device measurement should be unknown")
+	}
+	// Host and buffer_type entries are ignored.
+	u = &ModelMemoryUsage{Devices: []ModelMemoryDevice{
+		{Kind: "device", Total: 1, Model: 100, Context: 20, Compute: 3},
+		{Kind: "host", Model: 999},
+	}}
+	if b, ok := u.SelfBytes(); !ok || b != 123 {
+		t.Fatalf("self = %d/%v, want 123/true", b, ok)
+	}
+}
+
 func TestActionRejected(t *testing.T) {
 	c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)

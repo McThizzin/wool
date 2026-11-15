@@ -773,8 +773,18 @@ func (m *Model) routerSummary(w int) []string {
 			continue
 		}
 		r := routerResidentModel{ID: rm.ID, LoadedAt: m.routerLoadedAt[rm.ID]}
-		if fi := m.fitFor(rm.ID, "model"); fi.Ready {
-			r.Bytes, r.Known = fi.Est.Total, true
+		fi := m.fitFor(rm.ID, "model")
+		fallback, fallbackKnown := uint64(0), false
+		if fi.Ready {
+			fallback, fallbackKnown = fi.Est.Total, true
+		}
+		if rm.Status.Value == "sleeping" {
+			// A sleeping model keeps its models_max slot but frees its memory.
+			r.Bytes, r.Known = 0, true
+		} else {
+			r.Bytes, r.Known = routerModelBytes(rm, fallback, fallbackKnown)
+		}
+		if r.Known {
 			residentBytes += r.Bytes
 		} else {
 			residentKnown = false
@@ -788,11 +798,23 @@ func (m *Model) routerSummary(w int) []string {
 	candidateKnown := false
 	if hasSel {
 		candidate = sel.ID
-		if fi := m.fitFor(candidate, "model"); fi.Ready {
+		fi := m.fitFor(candidate, "model")
+		if fi.Ready {
 			candidateBytes, candidateKnown = fi.Est.Total, true
 		}
+		candidateBytes, candidateKnown = routerModelBytes(sel, candidateBytes, candidateKnown)
 	}
-	plan := predictRouterEviction(resident, candidate, candidateBytes, candidateKnown, limit)
+	memory := routerMemoryBudget{
+		Enabled: routerMemoryEnabled(m.routerModels),
+		Margin:  uint64(maxInt(0, m.cfg.Router.MemoryMarginMiB)) << 20,
+	}
+	if gpu, ok := m.snap.Primary(); ok && gpu.HasVRAM && gpu.VRAMTotal > 0 {
+		memory.Known = true
+		if gpu.VRAMUsed < gpu.VRAMTotal {
+			memory.Free = gpu.VRAMTotal - gpu.VRAMUsed
+		}
+	}
+	plan := predictRouterEviction(resident, candidate, candidateBytes, candidateKnown, limit, memory)
 
 	count := fmt.Sprintf("resident %d", len(resident))
 	if limit > 0 {
@@ -804,6 +826,9 @@ func (m *Model) routerSummary(w int) []string {
 		count += "/unlimited"
 	}
 	margin := fmt.Sprintf("%d MiB", maxInt(0, m.cfg.Router.MemoryMarginMiB))
+	if memory.Enabled {
+		margin += " (enforced)"
+	}
 	summary := count + " · margin " + margin
 	if len(resident) > 0 {
 		if residentKnown {
@@ -832,10 +857,10 @@ func (m *Model) routerSummary(w int) []string {
 			load += " (" + ui.HumanBytes(plan.CandidateBytes) + ")"
 		}
 		switch {
-		case len(plan.Victims) == 0:
-			load = "predicted eviction: none if " + load
 		case !plan.EstimatesKnown:
 			load = "predicted eviction: unknown (estimate missing) if " + load
+		case len(plan.Victims) == 0:
+			load = "predicted eviction: none if " + load
 		default:
 			load = "predicted eviction: " + strings.Join(plan.Victims, ", ") + " (LRU approx.) if " + load
 		}

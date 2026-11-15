@@ -104,6 +104,7 @@ func TestRouterArgs(t *testing.T) {
 		{"--models-preset", ini},
 		{"--models-max", "1"},
 		{"--fit-target", "512"},
+		{"--models-memory-margin", "512"},
 	} {
 		if !hasPair(args, p[0], p[1]) {
 			t.Errorf("missing %s %s in %v", p[0], p[1], args)

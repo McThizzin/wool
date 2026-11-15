@@ -26,8 +26,8 @@ type routerResidentModel struct {
 
 // routerEviction is a best-effort prediction of what loading Candidate does to
 // the resident set. The router evicts idle models in LRU order when the load
-// would exceed models_max; the API does not expose that order, so the victim
-// list is an approximation.
+// would exceed models_max or leave less than the memory margin; the API does
+// not expose the LRU order, so the victim list is an approximation.
 type routerEviction struct {
 	Candidate      string
 	CandidateBytes uint64
@@ -38,12 +38,50 @@ type routerEviction struct {
 	EstimatesKnown bool
 }
 
-// predictRouterEviction counts the slots a new load needs and picks that many
-// residents in approximate LRU order. It deliberately models only the count
-// limit: the pinned router does not evict on memory pressure, and a model that
-// is busy is never evicted, which the API cannot tell us.
+// routerMemoryBudget is the router's memory pressure state. Enabled is true
+// when the router reports per-model memory, which it only does when a positive
+// --models-memory-margin was passed. Free is current free device memory.
+type routerMemoryBudget struct {
+	Enabled bool
+	Known   bool
+	Free    uint64
+	Margin  uint64
+}
+
+// routerMemoryEnabled reports whether the router enforces a memory margin.
+func routerMemoryEnabled(models []llamaserver.Model) bool {
+	for _, rm := range models {
+		if rm.Memory != nil {
+			return true
+		}
+	}
+	return false
+}
+
+// routerModelBytes prefers the router's own measurement (the running
+// instance's allocation, then the measured minimum) and falls back to wool's
+// estimate.
+func routerModelBytes(rm llamaserver.Model, fallback uint64, fallbackKnown bool) (uint64, bool) {
+	if rm.Memory != nil {
+		if rm.Memory.Effective != nil {
+			if b, ok := rm.Memory.Effective.SelfBytes(); ok {
+				return b, true
+			}
+		}
+		if rm.Memory.Min != nil {
+			if b, ok := rm.Memory.Min.SelfBytes(); ok {
+				return b, true
+			}
+		}
+	}
+	return fallback, fallbackKnown
+}
+
+// predictRouterEviction removes approximate-LRU residents until the candidate
+// fits both the count limit and, when the router reports memory, the margin.
+// A resident that is busy is never evicted, which the API cannot tell us.
 func predictRouterEviction(resident []routerResidentModel, candidate string,
-	candidateBytes uint64, candidateKnown bool, limit int) routerEviction {
+	candidateBytes uint64, candidateKnown bool, limit int, memory routerMemoryBudget) routerEviction {
 	plan := routerEviction{
 		Candidate:      candidate,
 		CandidateBytes: candidateBytes,
@@ -59,15 +97,21 @@ func predictRouterEviction(resident []routerResidentModel, candidate string,
 			plan.EstimatesKnown = true
 			return plan
 		}
-		if !r.Known {
-			plan.EstimatesKnown = false
-		}
 	}
 	if limit > 0 {
 		plan.OverLimit = len(resident) + 1 - limit
 		if plan.OverLimit < 0 {
 			plan.OverLimit = 0
 		}
+	}
+
+	// Memory pressure needs a candidate size and current free memory. Without
+	// either, eviction cannot be ruled out; keep count-only victims but label
+	// the prediction unknown.
+	memoryCheck := memory.Enabled
+	if memoryCheck && (!memory.Known || !candidateKnown) {
+		plan.EstimatesKnown = false
+		memoryCheck = false
 	}
 
 	ordered := append([]routerResidentModel(nil), resident...)
@@ -78,12 +122,36 @@ func predictRouterEviction(resident []routerResidentModel, candidate string,
 		}
 		return a.LoadedAt.Before(b.LoadedAt)
 	})
-	n := plan.OverLimit
-	if n > len(ordered) {
-		n = len(ordered)
+
+	free := memory.Free
+	if memoryCheck {
+		if candidateBytes >= free {
+			free = 0
+		} else {
+			free -= candidateBytes
+		}
 	}
-	for i := 0; i < n; i++ {
-		plan.Victims = append(plan.Victims, ordered[i].ID)
+	victims := 0
+	for {
+		countExceeded := limit > 0 && len(resident)-victims+1 > limit
+		memoryExceeded := memoryCheck && free < memory.Margin
+		if !countExceeded && !memoryExceeded {
+			break
+		}
+		if victims >= len(ordered) {
+			break
+		}
+		victim := ordered[victims]
+		if memoryCheck && !victim.Known {
+			// The router will evict this model, but without its size we cannot
+			// tell whether that frees enough memory.
+			plan.EstimatesKnown = false
+			memoryCheck = false
+		} else if memoryCheck {
+			free += victim.Bytes
+		}
+		plan.Victims = append(plan.Victims, victim.ID)
+		victims++
 	}
 	return plan
 }

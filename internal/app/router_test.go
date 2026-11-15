@@ -15,7 +15,7 @@ func TestPredictRouterEvictionAtLimit(t *testing.T) {
 		{ID: "old", LoadedAt: now.Add(-time.Hour), Bytes: 4 << 30, Known: true},
 		{ID: "new", LoadedAt: now.Add(-time.Minute), Bytes: 5 << 30, Known: true},
 	}
-	plan := predictRouterEviction(resident, "candidate", 6<<30, true, 2)
+	plan := predictRouterEviction(resident, "candidate", 6<<30, true, 2, routerMemoryBudget{})
 	if plan.OverLimit != 1 {
 		t.Fatalf("over limit = %d, want 1", plan.OverLimit)
 	}
@@ -34,7 +34,7 @@ func TestPredictRouterEvictionOverLimit(t *testing.T) {
 		{ID: "middle", LoadedAt: now.Add(-2 * time.Hour), Known: true},
 		{ID: "new", LoadedAt: now.Add(-time.Hour), Known: true},
 	}
-	plan := predictRouterEviction(resident, "candidate", 0, true, 1)
+	plan := predictRouterEviction(resident, "candidate", 0, true, 1, routerMemoryBudget{})
 	if plan.OverLimit != 3 {
 		t.Fatalf("over limit = %d, want 3", plan.OverLimit)
 	}
@@ -45,11 +45,11 @@ func TestPredictRouterEvictionOverLimit(t *testing.T) {
 }
 
 func TestPredictRouterEvictionEmpty(t *testing.T) {
-	plan := predictRouterEviction(nil, "", 0, false, 1)
+	plan := predictRouterEviction(nil, "", 0, false, 1, routerMemoryBudget{})
 	if plan.Candidate != "" || len(plan.Victims) != 0 || plan.Resident {
 		t.Fatalf("plan = %+v", plan)
 	}
-	plan = predictRouterEviction(nil, "first", 4<<30, true, 1)
+	plan = predictRouterEviction(nil, "first", 4<<30, true, 1, routerMemoryBudget{})
 	if plan.OverLimit != 0 || len(plan.Victims) != 0 {
 		t.Fatalf("first load should not evict: %+v", plan)
 	}
@@ -58,7 +58,7 @@ func TestPredictRouterEvictionEmpty(t *testing.T) {
 func TestPredictRouterEvictionCandidateResident(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
 	resident := []routerResidentModel{{ID: "loaded", LoadedAt: now, Known: true}}
-	plan := predictRouterEviction(resident, "loaded", 4<<30, true, 1)
+	plan := predictRouterEviction(resident, "loaded", 4<<30, true, 1, routerMemoryBudget{})
 	if !plan.Resident {
 		t.Fatal("candidate should be reported as resident")
 	}
@@ -70,7 +70,7 @@ func TestPredictRouterEvictionCandidateResident(t *testing.T) {
 func TestPredictRouterEvictionUnknownEstimate(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
 	resident := []routerResidentModel{{ID: "old", LoadedAt: now, Known: false}}
-	plan := predictRouterEviction(resident, "candidate", 0, false, 1)
+	plan := predictRouterEviction(resident, "candidate", 0, false, 1, routerMemoryBudget{})
 	if plan.EstimatesKnown {
 		t.Fatal("plan should be unknown")
 	}
@@ -85,9 +85,78 @@ func TestPredictRouterEvictionZeroLoadedAtSortsLast(t *testing.T) {
 		{ID: "unknown", Known: true},
 		{ID: "known", LoadedAt: now, Known: true},
 	}
-	plan := predictRouterEviction(resident, "candidate", 0, true, 2)
+	plan := predictRouterEviction(resident, "candidate", 0, true, 2, routerMemoryBudget{})
 	if len(plan.Victims) != 1 || plan.Victims[0] != "known" {
 		t.Fatalf("victims = %v, want [known]", plan.Victims)
+	}
+}
+
+func TestPredictRouterEvictionMemoryPressure(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	resident := []routerResidentModel{
+		{ID: "old", LoadedAt: now.Add(-time.Hour), Bytes: 3 << 30, Known: true},
+		{ID: "new", LoadedAt: now.Add(-time.Minute), Bytes: 2 << 30, Known: true},
+	}
+	memory := routerMemoryBudget{Enabled: true, Known: true, Free: 8 << 30, Margin: 4 << 30}
+	plan := predictRouterEviction(resident, "candidate", 5<<30, true, 0, memory)
+	if len(plan.Victims) != 1 || plan.Victims[0] != "old" {
+		t.Fatalf("victims = %v, want [old]", plan.Victims)
+	}
+	if !plan.EstimatesKnown {
+		t.Fatal("plan should be known")
+	}
+}
+
+func TestPredictRouterEvictionMemoryEvictsSleeping(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	resident := []routerResidentModel{
+		{ID: "sleeping", LoadedAt: now.Add(-time.Hour), Bytes: 0, Known: true},
+		{ID: "loaded", LoadedAt: now.Add(-time.Minute), Bytes: 3 << 30, Known: true},
+	}
+	memory := routerMemoryBudget{Enabled: true, Known: true, Free: 3 << 30, Margin: 4 << 30}
+	plan := predictRouterEviction(resident, "candidate", 1<<30, true, 0, memory)
+	want := []string{"sleeping", "loaded"}
+	if strings.Join(plan.Victims, ",") != strings.Join(want, ",") {
+		t.Fatalf("victims = %v, want %v", plan.Victims, want)
+	}
+}
+
+func TestPredictRouterEvictionMemoryUnknown(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	resident := []routerResidentModel{
+		{ID: "old", LoadedAt: now.Add(-time.Hour), Bytes: 3 << 30, Known: true},
+	}
+	// Free memory unknown: the margin cannot be evaluated.
+	plan := predictRouterEviction(resident, "candidate", 5<<30, true, 0,
+		routerMemoryBudget{Enabled: true, Margin: 4 << 30})
+	if plan.EstimatesKnown {
+		t.Fatal("plan should be unknown without free memory")
+	}
+	if len(plan.Victims) != 0 {
+		t.Fatalf("victims = %v, want none", plan.Victims)
+	}
+
+	// Candidate size unknown: same.
+	plan = predictRouterEviction(resident, "candidate", 0, false, 0,
+		routerMemoryBudget{Enabled: true, Known: true, Free: 8 << 30, Margin: 4 << 30})
+	if plan.EstimatesKnown {
+		t.Fatal("plan should be unknown without a candidate size")
+	}
+}
+
+func TestPredictRouterEvictionMemoryUnknownVictim(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	resident := []routerResidentModel{
+		{ID: "old", LoadedAt: now.Add(-time.Hour), Known: false},
+		{ID: "new", LoadedAt: now.Add(-time.Minute), Bytes: 2 << 30, Known: true},
+	}
+	memory := routerMemoryBudget{Enabled: true, Known: true, Free: 8 << 30, Margin: 6 << 30}
+	plan := predictRouterEviction(resident, "candidate", 5<<30, true, 0, memory)
+	if plan.EstimatesKnown {
+		t.Fatal("plan should be unknown when a victim size is missing")
+	}
+	if len(plan.Victims) != 1 || plan.Victims[0] != "old" {
+		t.Fatalf("victims = %v, want [old]", plan.Victims)
 	}
 }
 
@@ -145,6 +214,41 @@ func TestRouterSummaryOverLimit(t *testing.T) {
 	for _, want := range []string{
 		"resident 2/1 (over limit)",
 		"predicted eviction: gemma-4-heretic, qwen3-4b-cyber",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("summary missing %q:\n%s", want, out)
+		}
+	}
+}
+
+func TestRouterSummaryMemoryMargin(t *testing.T) {
+	m := testModel(t)
+	m.cfg.Router.ModelsMax = 0
+	m.cfg.Router.MemoryMarginMiB = 4096
+	now := time.Unix(1_700_000_000, 0)
+	m.routerLoadedAt = map[string]time.Time{"gemma-4-heretic": now}
+	m.routerModels = []llamaserver.Model{
+		{
+			ID:     "gemma-4-heretic",
+			Status: llamaserver.ModelStatus{Value: "loaded"},
+			Memory: &llamaserver.ModelMemory{
+				Effective: &llamaserver.ModelMemoryUsage{Devices: []llamaserver.ModelMemoryDevice{
+					{Kind: "device", Name: "card1", Total: 8 << 30, Model: 3 << 30},
+				}},
+			},
+		},
+		{ID: "qwen3-4b-cyber", Status: llamaserver.ModelStatus{Value: "unloaded"}},
+	}
+	m.routerSel = 1
+	m.fitCache = map[string]fitInfo{
+		"model:qwen3-4b-cyber": {Ready: true, Est: gguf.Estimate{Total: 5 << 30}},
+	}
+
+	out := strings.Join(m.routerSummary(120), "\n")
+	for _, want := range []string{
+		"margin 4096 MiB (enforced)",
+		"est 3.0 GiB",
+		"predicted eviction: gemma-4-heretic",
 	} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("summary missing %q:\n%s", want, out)

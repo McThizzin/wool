@@ -420,7 +420,8 @@ the router command line:
 ```text
 --host H --port P --models-preset models.ini --models-max N
 [--models-autoload | --no-models-autoload]
-[--sleep-idle-seconds N] [--metrics] [--fit-target MiB]
+[--sleep-idle-seconds N] [--metrics]
+[--fit-target MiB --models-memory-margin MiB]
 <router.extra_args>
 ```
 
@@ -465,16 +466,21 @@ it starts: the router keeps only the newest `models_max` models and evicts
 earlier members, so the CLI prints a warning and a closing note, and the TUI
 asks for confirmation.
 
-The Router tab predicts eviction from the count limit. The pinned router's
-`pick_victim` selects the idle model with the oldest `last_used` when
-`models_max` would be exceeded; `GET /models` does not expose `last_used`, so
-the TUI approximates LRU from the first poll that saw each model resident and
-labels the victim list `LRU approx.`. A busy model is never evicted, but the
-API does not expose per-model request counts, so the prediction cannot account
-for one. The memory margin is shown as configured; the pinned router evicts by
-count, not by the margin, and `--fit-target` uses the margin when sizing each
-child. Missing model estimates degrade to `unknown` instead of hiding the
-prediction.
+The Router tab predicts eviction from the count limit and, when the router
+enforces one, the memory margin. The router selects the idle model with the
+oldest `last_used` until the new load fits; `GET /models` does not expose
+`last_used`, so the TUI approximates LRU from the first poll that saw each model
+resident and labels the victim list `LRU approx.`. A busy model is never
+evicted, but the API does not expose per-model request counts, so the prediction
+cannot account for one. With a positive `memory_margin_mib`, wool passes both
+`--fit-target` and `--models-memory-margin`; the router then reports a `memory`
+object per model in `/models`, and the TUI marks the margin `(enforced)`. The
+prediction prefers the router's `effective` measurement, then `min`, over wool's
+estimate. Sleeping models keep their `models_max` slot but release memory, so
+they count toward the limit with zero bytes. If the candidate size or free VRAM
+is unknown, the memory prediction degrades to `unknown` instead of claiming no
+eviction. `GET /props` does not expose the margin, so the TUI assumes the
+configured value.
 
 ## TUI
 
@@ -796,8 +802,8 @@ pattern is charged full context and also marked approximate. The same applies
 to parsing problems such as a computed tensor total larger than the file.
 `wool doctor --json` exposes the byte terms, the flag and the reasons.
 
-Placement and the Gemma defaults were checked against llama.cpp `0.6.0-dev`
-(build 11429, commit `d812350493`). These are implementation details, so revisit
+Placement and the Gemma defaults were checked against llama.cpp `0.9.0-dev`
+(build 12110, commit `cd959bae99`). These are implementation details, so revisit
 the table when the supported `llama-server` version changes.
 
 The estimate is intentionally approximate. It does not model context
@@ -1063,7 +1069,7 @@ wool status [name] [--json]          show detached server state
 wool stats [MODEL] [options]         live prompt/gen t/s, requests, slots
 wool logs [name] [-n N] [-f] [--json] show a server log, or parsed requests
 wool alerts [--json]                 evaluate alert rules against current state
-wool router [start|stop|status|models|load ID|unload ID|reload|ini]
+wool router [start|stop|status|models|load ID|unload ID|load-group NAME|groups|reload|ini]
 wool config path                     print the config path
 wool config init [--force] [PATH]    write a sample config
 wool config explain TARGET [--json]  show each value and its source layer

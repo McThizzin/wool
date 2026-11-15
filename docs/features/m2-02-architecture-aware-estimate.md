@@ -87,8 +87,8 @@ revisit placement rules when the estimator is calibrated against observations.
   every 5th layer dense with shared KV from layer 20. An unknown architecture
   with a sliding window but no pattern is charged full context and marked
   approximate.
-- Placement and defaults were checked against llama.cpp `0.6.0-dev` (build
-  11429, commit `d812350493`); revisit the table when upgrading.
+- Placement and defaults were checked against llama.cpp `0.9.0-dev` (build
+  12110, commit `cd959bae99`); revisit the table when upgrading.
 
 **Validation.** Against the local Gemma 4 E4B Q4_K_M files (42 blocks, 512-token
 window, 256-wide SWA heads, 18 shared-KV layers) at 65k context and all layers
@@ -103,7 +103,9 @@ The heretic file is 19% above the observed run, inside the 20% acceptance bar;
 the old estimator reported 8.40 GiB. KV dropped from the old 3.00 GiB estimate
 to 1.02 GiB. Qwen3.5-4B stayed at ~2.00 GiB KV, confirming the hybrid schedule
 did not regress. LFM3, LFM2.5-24B-A2B, Ornith-1.5-9B and CyberQwen3-4B parsed
-with no unmodelled tensors and no approximation flags.
+with no unmodelled tensors and no approximation flags. LFM3 did not load on the
+previously pinned `0.6.0-dev` build; it loads on `0.9.0-dev` (build 12110,
+commit `cd959bae99`).
 
 **Acceptance.**
 

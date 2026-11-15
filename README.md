@@ -20,7 +20,7 @@
 - **Effective-config diff.** `wool config diff TARGET` and the TUI `D` overlay show only the launch options that differ from the model or defaults layer, with the source of each side.
 - **Full router control.** Start/stop the router, list models, load/unload, reload presets, and read per-model stats and slots.
 - **Warm sets.** Named `[groups.*]` lists load together with one command or one key, continue after a failure, and report exactly which models failed. Groups larger than `models_max` warn before starting.
-- **Eviction view.** The Router tab shows resident models against `models_max`, the configured memory margin, wool's estimate for the resident set, and a best-effort LRU prediction of what loading the selected model would evict. Missing estimates say `unknown`, and the victim is always labeled as a prediction.
+- **Eviction view.** The Router tab shows resident models against `models_max`, the configured memory margin, wool's estimate for the resident set, and a best-effort LRU prediction of what loading the selected model would evict under the count limit or the memory margin. Missing estimates say `unknown`, and the victim is always labeled as a prediction.
 - **VRAM-fit estimates.** Reads GGUF metadata and the tensor table, models llama.cpp's tensor placement, Gemma-style sliding-window/shared KV, hybrid attention (Qwen3.5/Qwen3-Next), per-layer KV heads, and quantized KV cache types. The UI shows `weights + KV + overhead`, the budget after reserve and other GPU usage, headroom and the limiting term.
 - **Auto-fit recommendations.** `wool fit TARGET` binary-searches the largest context that fits the budget, capped at the model's native context. When the requested settings cannot hold a useful context it ranks fallbacks: lower KV cache precision first, then CPU offload (using `n_cpu_moe` for MoE models). Every recommendation is within budget and includes weights, KV, overhead, headroom, the limiting term and the changes it makes. `--save-preset NAME` writes the result as a new preset.
 - **Benchmarks and history.** `wool bench TARGET` starts an ephemeral server, warms up, and records prompt and generation throughput over repeated runs with median/min/max and peak VRAM. It can attach to a matching managed server or any `--url`, and optionally drive `llama-bench`. `wool bench history` and the Bench tab show past runs, trends and a two-run comparison. `wool bench compare A B` runs two targets interleaved and reports the median, spread and percentage delta.
@@ -97,7 +97,7 @@ wool status [name] [--json]          show detached server state
 wool stats [MODEL] [--json]          live prompt/gen t/s, requests, slots
 wool logs [name] [-n N] [-f] [--json] show a server log, or parsed requests
 wool alerts [--json]                 evaluate alert rules against current state
-wool router [start|stop|status|models|load ID|unload ID|reload|ini]
+wool router [start|stop|status|models|load ID|unload ID|load-group NAME|groups|reload|ini]
 wool config path                     print the config path
 wool config init [--force] [PATH]    write a sample config
 wool config explain TARGET [--json]  show each value and where it came from
@@ -433,7 +433,8 @@ Only router-level options are passed on the command line:
 ```text
 --host H --port P --models-preset models.ini --models-max N
 [--models-autoload | --no-models-autoload]
-[--sleep-idle-seconds N] [--metrics] [--fit-target MiB]
+[--sleep-idle-seconds N] [--metrics]
+[--fit-target MiB --models-memory-margin MiB]
 ```
 
 ```sh
@@ -454,9 +455,9 @@ Warm sets are named groups of model IDs:
 models = ["qwen3-4b-cyber", "lfm3-1-7b"]
 ```
 
-`wool router load-group coding` loads the models in order, waits for each to reach `loaded` or `sleeping`, continues after an error, and prints a per-model result plus `group coding: N/M loaded; failed: …`. A model that is already resident is reported as loaded without a second request. When the group is larger than `router.models_max`, wool warns before starting because the router will evict earlier models as later ones load. The TUI action is `w` on the Router tab (or `/load-group NAME`); an over-limit group asks for confirmation first.
+`wool router load-group coding` loads the models in order, waits for each to reach `loaded` or `sleeping`, continues after an error, and prints a per-model result plus `group coding: N/M loaded; failed: …`. A model that is already resident is reported as loaded without a second request. When the group is larger than `router.models_max`, wool warns before starting because the router will evict earlier models as later ones load; memory pressure can evict them even below the count limit. The TUI action is `w` on the Router tab (or `/load-group NAME`); an over-limit group asks for confirmation first.
 
-The Router tab summarizes the resident set as `resident N/limit · margin N MiB · est SIZE`. It predicts the effect of loading the selected model: `predicted eviction: A, B (LRU approx.) if loading X (SIZE)`, `predicted eviction: none if loading X (SIZE)`, or `predicted eviction: unknown (estimate missing) if loading X`. The pinned `llama-server` router evicts idle models in LRU order when `models_max` would be exceeded; `GET /models` does not expose `last_used`, so the TUI approximates the order from when each model was first seen resident. Busy models are never evicted, and the prediction is not a guarantee.
+The Router tab summarizes the resident set as `resident N/limit · margin N MiB · est SIZE`. It predicts the effect of loading the selected model: `predicted eviction: A, B (LRU approx.) if loading X (SIZE)`, `predicted eviction: none if loading X (SIZE)`, or `predicted eviction: unknown (estimate missing) if loading X`. When the router reports per-model memory, the margin is marked `(enforced)` and the prediction uses the router's measurements: it evicts idle models in LRU order until the candidate fits both `models_max` and the margin. Sleeping models keep their slot but release memory. `GET /models` does not expose `last_used`, so the TUI approximates the order from when each model was first seen resident. Busy models are never evicted, and the prediction is not a guarantee.
 
 ## Runtime files
 

@@ -225,6 +225,8 @@ models = ["qwen3-4b-cyber", "lfm3-1-7b"]
 
 [router]
 models_max = 1
+# Keep this much device memory free per device. The router unloads idle
+# models in LRU order until a new load fits; 0 disables memory eviction.
 memory_margin_mib = 512
 autoload = false
 sleep_idle_seconds = -1
