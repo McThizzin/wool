@@ -1261,12 +1261,12 @@ func (m *Model) footerView() string {
 	} else if m.tab == tabLogs {
 		hints = "j/k scroll · f follow · v raw/structured · m filter · enter target · ? help · q quit"
 	} else if m.tab == tabRouter {
-		hints = "l/u load/unload · w group · j/k select · r/R router · enter load · ? help · q quit"
+		hints = "l/u load/unload · w group · j/k select · r/R router · E endpoint · enter load · ? help · q quit"
 	} else {
 		if m.crash != nil {
 			hints = "S restart · x dismiss · tab switch · j/k move · / command · ? help · q quit"
 		} else {
-			hints = "tab switch · j/k move · enter start · x stop · r router · d doctor · D diff · / command · ? help · q quit"
+			hints = "tab switch · j/k move · enter start · x stop · r router · E endpoint · d doctor · D diff · / command · ? help · q quit"
 		}
 	}
 	left := st.Muted.Render(" " + hints)
@@ -1290,8 +1290,16 @@ func (m *Model) overlayView() string {
 	for _, l := range lines[start:end] {
 		body = append(body, " "+l)
 	}
-	panel := m.render.Panel(m.overlayTitle, "esc close · j/k scroll", body, m.width, m.height-1, true)
-	return panel + "\n" + st.Muted.Render(ui.Fit(" overlay "+m.overlayTitle+" ("+fmt.Sprint(len(lines))+" lines)", m.width))
+	hint := "esc close · j/k scroll"
+	footer := " overlay " + m.overlayTitle + " (" + fmt.Sprint(len(lines)) + " lines)"
+	if m.endpointOpen {
+		hint = "tab/1-4 select · c copy · u URL · y model"
+		if m.endpointNotice != "" {
+			footer = " " + m.endpointNotice + " · " + m.overlayTitle
+		}
+	}
+	panel := m.render.Panel(m.overlayTitle, hint, body, m.width, m.height-1, true)
+	return panel + "\n" + st.Muted.Render(ui.Fit(footer, m.width))
 }
 
 // helpers ----------------------------------------------------------------

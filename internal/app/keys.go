@@ -10,7 +10,7 @@ import (
 
 var commandNames = []string{
 	"start", "restart", "stop", "dismiss", "router", "load", "unload", "load-group", "reload",
-	"edit", "fit", "doctor", "theme", "tab", "bench", "logs", "help", "quit",
+	"edit", "fit", "doctor", "theme", "tab", "bench", "logs", "endpoint", "help", "quit",
 }
 
 func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -24,6 +24,13 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.updateGroupPicker(msg)
 	}
 	if m.overlay != "" {
+		if m.endpointOpen {
+			if msg.String() == "ctrl+c" {
+				return m, tea.Quit
+			}
+			m.handleEndpointKey(msg.String())
+			return m, nil
+		}
 		switch msg.String() {
 		case "esc", "enter", "q":
 			m.overlay = ""
@@ -156,6 +163,8 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.setTab(tabLogs)
 	case "B":
 		m.setTab(tabBench)
+	case "E":
+		m.showEndpoint("")
 	case "e":
 		m.openEditor()
 	case "F":
@@ -336,6 +345,12 @@ func (m *Model) modelCandidates(cmd string) []string {
 		return out
 	case "logs":
 		return []string{"server", "router"}
+	case "endpoint":
+		out := []string{"server", "router"}
+		for _, rm := range m.routerModels {
+			out = append(out, rm.ID)
+		}
+		return out
 	case "stop":
 		return []string{"server", "router", "all"}
 	case "router":

@@ -96,6 +96,7 @@ wool restart [server|router] [--no-wait]  relaunch the recorded instance
 wool stop [server|router|all]        stop detached servers
 wool status [name] [--json]          show detached server state
 wool stats [MODEL] [--json]          live prompt/gen t/s, requests, slots
+wool endpoint [server|router|MODEL] [--json]  base URL and client snippets
 wool logs [name] [-n N] [-f] [--json] show a server log, or parsed requests
 wool alerts [--json]                 evaluate alert rules against current state
 wool router [start|stop|status|models|load ID|unload ID|load-group NAME|groups|reload|ini]
@@ -115,6 +116,15 @@ acceptance when in use. It targets an explicit router MODEL, else the
 standalone server, else the router's first loaded model. `--json` prints the
 stable versioned snapshot for scripts. A server started with `metrics = false`
 makes the command fail with the reason instead of printing zeros.
+
+`wool endpoint [server|router|MODEL]` prints the base URL, the `/v1` API base,
+the model ID and copy-paste snippets for `curl`, the OpenAI Python client,
+Continue and Open WebUI. Without a target it prefers the standalone server and
+then the router; `server` and `router` are explicit, and any other value is a
+router model ID. The model ID is read from the running instance, so it matches
+what clients should send. Snippets use the placeholder key `not-needed`;
+llama-server ignores the key and wool never prints a credential. `--json` emits
+the stable versioned result for scripts.
 
 `wool fit TARGET` accepts a preset name or model ID plus `--vram SIZE`,
 `--cache-type TYPE`, `--gpu-layers N`, `--n-cpu-moe N`, `--save-preset NAME`,
@@ -418,13 +428,14 @@ Supported color keys: `border`, `accent`, `text`, `dim`, `badge_fg`, `red`, `yel
 | `p` | save the selected recommendation as a preset (in the fit overlay; `P` replaces) |
 | `d` | run doctor |
 | `D` | show the selected config diff, or the Bench run's target diff |
+| `E` | show endpoint details and client snippets |
 | `t` | cycle theme |
 | `ctrl+r` | reload config.toml |
 | `/` or `:` | command line |
 | `?` | help overlay |
 | `q` / `ctrl+c` | quit without stopping servers |
 
-Slash commands include `/start`, `/restart`, `/stop`, `/dismiss`, `/router`, `/load`, `/unload`, `/reload`, `/edit`, `/fit`, `/doctor`, `/theme`, `/tab`, `/bench`, `/logs`, `/help`, and `/quit`.
+Slash commands include `/start`, `/restart`, `/stop`, `/dismiss`, `/router`, `/load`, `/unload`, `/reload`, `/edit`, `/fit`, `/doctor`, `/endpoint`, `/theme`, `/tab`, `/bench`, `/logs`, `/help`, and `/quit`.
 
 ## Router mode
 

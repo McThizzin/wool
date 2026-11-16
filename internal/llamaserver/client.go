@@ -285,6 +285,26 @@ func (c *Client) WaitReady(ctx context.Context, timeout, interval time.Duration)
 	}
 }
 
+// OpenAIModels lists the model IDs the OpenAI-compatible /v1/models endpoint
+// reports. It works for a standalone server and a router.
+func (c *Client) OpenAIModels(ctx context.Context) ([]string, error) {
+	var body struct {
+		Data []struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	if err := c.get(ctx, "/v1/models", &body); err != nil {
+		return nil, err
+	}
+	ids := make([]string, 0, len(body.Data))
+	for _, m := range body.Data {
+		if m.ID != "" {
+			ids = append(ids, m.ID)
+		}
+	}
+	return ids, nil
+}
+
 // Models lists router models. With reload, the router re-reads its INI first.
 func (c *Client) Models(ctx context.Context, reload bool) ([]Model, error) {
 	path := "/models"

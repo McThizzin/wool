@@ -16,6 +16,7 @@ import (
 	"wool/internal/alerts"
 	"wool/internal/config"
 	"wool/internal/daemon"
+	"wool/internal/endpoint"
 	"wool/internal/gguf"
 	"wool/internal/llamaserver"
 	"wool/internal/measure"
@@ -161,6 +162,11 @@ type Model struct {
 	overlay       string
 	overlayTitle  string
 	overlayScroll int
+
+	endpointOpen   bool
+	endpointData   endpoint.Endpoint
+	endpointSel    int
+	endpointNotice string
 
 	editor *editor
 }
@@ -344,6 +350,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.editor != nil {
 			m.editor.input.Width = m.input.Width
 		}
+		if m.endpointOpen {
+			m.refreshEndpointOverlay()
+		}
 		m.ensureFit()
 		return m, nil
 	case spinner.TickMsg:
@@ -422,6 +431,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.overlayTitle = "group " + msg.name
 			m.overlay = groupDetails(msg.results, msg.limit)
 			m.overlayScroll = 0
+			m.endpointOpen = false
 		}
 		return m, m.refreshLater(150 * time.Millisecond)
 	case doctorMsg:
@@ -433,6 +443,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.overlay = msg.text
 		m.overlayTitle = "doctor"
 		m.overlayScroll = 0
+		m.endpointOpen = false
 		if msg.failures > 0 {
 			m.setToast(fmt.Sprintf("doctor found %d failure(s)", msg.failures))
 		} else {

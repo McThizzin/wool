@@ -371,10 +371,12 @@ func (m *Model) showConfigDiffFor(id, kind string) {
 	}
 	m.overlayTitle = "config diff · " + id
 	m.overlayScroll = 0
+	m.endpointOpen = false
 	m.overlay = strings.Join(lines, "\n")
 }
 
 func (m *Model) showHelp() {
+	m.endpointOpen = false
 	m.overlayTitle = "keys and commands"
 	m.overlayScroll = 0
 	m.overlay = strings.Join([]string{
@@ -394,6 +396,7 @@ func (m *Model) showHelp() {
 		"  v                      show the raw log instead of the request table",
 		"  L                      focus the logs tab (enter toggles target)",
 		"  B                      focus the bench history tab",
+		"  E                      show the endpoint helper (base URL, model and snippets)",
 		"  space                  mark a benchmark run for comparison",
 		"  f                      follow logs, or cycle the bench target filter",
 		"  e                      edit the selected preset/model options",
@@ -424,6 +427,7 @@ func (m *Model) showHelp() {
 		"  /bench [TARGET|all]    show benchmark history, optionally filtered",
 		"  /bench compare A B     compare the newest run of two targets",
 		"  /logs [server|router]  show a log",
+		"  /endpoint [server|router|MODEL]  show base URL and client snippets",
 		"  /quit                  exit",
 		"",
 		"Detached servers are not children of the TUI. Quitting never stops them.",
@@ -550,6 +554,16 @@ func (m *Model) runCommand(line string) (tea.Cmd, bool) {
 			}
 		}
 		m.setTab(tabLogs)
+	case "endpoint":
+		if len(args) > 1 {
+			m.setToast("endpoint: want server, router or a model ID")
+			break
+		}
+		what := ""
+		if len(args) == 1 {
+			what = args[0]
+		}
+		m.showEndpoint(what)
 	case "theme":
 		if len(args) == 0 {
 			m.cycleTheme(1)

@@ -580,6 +580,7 @@ goroutine.
 | `F` | recommend settings that fit VRAM in the editor |
 | `d` | run doctor |
 | `D` | show what the selected target changes |
+| `E` | show endpoint details and client snippets |
 | `t` | cycle theme |
 | `ctrl+r` | reload config.toml |
 | `/` or `:` | command line |
@@ -603,6 +604,7 @@ completion for command names and model/preset IDs.
 /edit                   open the option editor
 /fit                    open the option editor and fit overlay
 /doctor                 run readiness checks
+/endpoint [server|router|MODEL]  show endpoint details and client snippets
 /theme [name]           cycle or set a theme
 /tab NAME               dashboard, models, presets, router, inference, hardware, logs, bench
 /logs [server|router]   show a log
@@ -1068,6 +1070,35 @@ Warnings do not make the command fail; failures do. `wool doctor --json`
 exposes the same report. The TUI shows the plain-text report in a scrollable
 overlay.
 
+## Endpoint helper
+
+`internal/endpoint` is the single formatter behind `wool endpoint` and the TUI
+overlay, so the two cannot drift. `Build` normalizes a base URL, derives
+`base_url/v1`, and returns the versioned `Endpoint` with four snippets in a
+fixed order: `curl`, `openai-python`, `continue` and `open-webui`. The JSON
+shape is `version`, `source`, `base_url`, `api_base`, `model` and `snippets`
+(name/text pairs). Snippets always use the visible placeholder `not-needed`;
+llama-server ignores the key, so wool never reads or prints a credential.
+
+Target resolution is shared in intent, not code: the CLI asks the daemon
+manager, the TUI asks its live state. The CLI with no target prefers the
+standalone server and then the router; the TUI prefers the focused Router tab's
+selection, then the standalone server, then the router. `server` and `router`
+are explicit, and any other value is a router model ID. The CLI's standalone
+model ID comes from `/v1/models` (1s timeout), then the config alias, then the
+model recorded with the daemon; the TUI uses the config alias and then the
+recorded model. The router prefers a `loaded` or `sleeping` model and otherwise
+the first ID after sorting, which keeps repeated calls deterministic; an
+explicit model ID is accepted even when unloaded. An unknown ID fails with the
+router's own answer instead of guessing.
+
+In the TUI, `E` or `/endpoint [server|router|MODEL]` opens a scrollable
+overlay. `tab`/`shift+tab` or `1`..`4` select a snippet, `c` copies it, `u`
+copies the base URL, `y` copies the model ID, `j`/`k` scroll and `esc` closes.
+Clipboard writes go through the existing `atotto/clipboard` dependency; a
+failure (no `xclip`/`wl-copy`, for example) is reported in the overlay footer
+as `clipboard error: …` rather than being swallowed.
+
 ## CLI reference
 
 ```text
@@ -1085,6 +1116,7 @@ wool restart [server|router] [--no-wait]  relaunch the recorded instance
 wool stop [server|router|all]        stop detached servers
 wool status [name] [--json]          show detached server state
 wool stats [MODEL] [options]         live prompt/gen t/s, requests, slots
+wool endpoint [server|router|MODEL] [--json]  base URL and client snippets
 wool logs [name] [-n N] [-f] [--json] show a server log, or parsed requests
 wool alerts [--json]                 evaluate alert rules against current state
 wool router [start|stop|status|models|load ID|unload ID|load-group NAME|groups|reload|ini]
