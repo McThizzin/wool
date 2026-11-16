@@ -41,7 +41,6 @@ type fitOptions struct {
 	asJSON     bool
 }
 
-
 func (o *fitOptions) set(name, value string) error {
 	switch name {
 	case "--vram":
