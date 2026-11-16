@@ -125,9 +125,3 @@ func benchHistoryLoad(b *measure.Bench) string {
 	}
 	return fmt.Sprintf("%.1fs", b.LoadMS/1000)
 }
-func fallbackDash(s string) string {
-	if s == "" {
-		return "-"
-	}
-	return s
-}
