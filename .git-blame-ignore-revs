@@ -1,0 +1,25 @@
+# Pure-move refactors (splitting large files into same-package files).
+# These commits only relocate declarations, so blame should follow the code.
+#
+# Configure Git to use this file:
+#   git config blame.ignoreRevsFile .git-blame-ignore-revs
+#
+# Phase 1: CLI and TUI splits.
+472cbb83048939e4cd1b6c87544fbfbe7aa35e43
+47397fc539ca25f20029bd9922e27e771c950506
+cef5b3e4622923de7aa38ebf186c2aaefec06213
+5cfee212eaa7912a75e90f7746edbd87d72b16bc
+42199d12f7d6b623a2620539d21d0985e641affb
+571c30b1c8360d21242b96337d76119f7b0d047e
+b174100f4d5dbbcb3d1fa2ca9fa36a95b7afbf9a
+54e6bb2596bc3dc0ea744d743840660d30329e2e
+#
+# Phase 2: library splits.
+4b027a5738e5d5c015ee47bbdc92490002c7f47b
+c2c0273693c94d75f65544722b6d6208a20d3de8
+b3de46c104e869919d09064f2045775f99948929
+#
+# Phase 3: optional splits.
+d8d540562b1729755504481c73723637811c20cc
+8cb9ea9fcc3f4eac23d687b35262c2e2ddeaec3d
+ed8fb2d914c991fcc8571eb07bfbbb9fa9c4d7b9
