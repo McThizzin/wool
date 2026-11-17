@@ -28,6 +28,21 @@ func HumanTokenCount(n uint64) string {
 	}
 }
 
+// HumanCount renders a large count such as a parameter total with k/M/B
+// suffixes.
+func HumanCount(n uint64) string {
+	switch {
+	case n >= 1_000_000_000:
+		return fmt.Sprintf("%.1fB", float64(n)/1e9)
+	case n >= 1_000_000:
+		return fmt.Sprintf("%.1fM", float64(n)/1e6)
+	case n >= 1_000:
+		return fmt.Sprintf("%.1fk", float64(n)/1e3)
+	default:
+		return fmt.Sprintf("%d", n)
+	}
+}
+
 // Fallback returns s, or alt when s is empty.
 func Fallback(s, alt string) string {
 	if s == "" {

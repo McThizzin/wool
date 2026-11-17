@@ -33,6 +33,23 @@ func isExpertTensor(name string) bool {
 	return strings.Contains(name, ".ffn_") && strings.Contains(name, "_exps.")
 }
 
+// Parameters returns the declared parameter count, falling back to the sum of
+// tensor element counts when general.parameter_count is absent.
+func (m Meta) Parameters() uint64 {
+	if m.ParameterCount > 0 {
+		return m.ParameterCount
+	}
+	var total uint64
+	for _, t := range m.Tensors {
+		n := uint64(1)
+		for _, d := range t.Dims {
+			n *= d
+		}
+		total += n
+	}
+	return total
+}
+
 // TensorBytes returns the total size of the parsed tensor table.
 func (m Meta) TensorBytes() uint64 {
 	var total uint64

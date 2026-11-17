@@ -42,6 +42,27 @@ func TestHumanTokenCount(t *testing.T) {
 	}
 }
 
+func TestHumanCount(t *testing.T) {
+	tests := []struct {
+		n    uint64
+		want string
+	}{
+		{0, "0"},
+		{999, "999"},
+		{1_000, "1.0k"},
+		{1_500, "1.5k"},
+		{1_000_000, "1.0M"},
+		{2_250_000, "2.2M"},
+		{1_000_000_000, "1.0B"},
+		{7_000_000_000, "7.0B"},
+	}
+	for _, tc := range tests {
+		if got := HumanCount(tc.n); got != tc.want {
+			t.Errorf("HumanCount(%d) = %q, want %q", tc.n, got, tc.want)
+		}
+	}
+}
+
 func TestHumanBytes(t *testing.T) {
 	tests := []struct {
 		n    uint64

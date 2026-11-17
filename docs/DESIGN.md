@@ -63,8 +63,9 @@ supervisor owns the child, and both stay in the same process group.
 | --- | --- |
 | `cmd/wool` | CLI parsing, subcommands, TUI entry point |
 | `internal/app` | Bubble Tea model, tabs, overlays, key handling, actions |
-| `internal/config` | TOML schema, defaults, merge/resolve, validation, paths, comment-preserving edits |
+| `internal/config` | TOML schema, defaults, merge/resolve, validation, paths, comment-preserving edits, model add |
 | `internal/daemon` | detached process start/stop, state files, liveness checks, ports, log tailing |
+| `internal/discovery` | bounded GGUF scan over `model_dirs`, metadata, configured/duplicate grouping and add suggestions |
 | `internal/llamaserver` | single-server argv, router argv, `models.ini` generation, HTTP client |
 | `internal/gguf` | GGUF metadata reader and VRAM estimate |
 | `internal/fit` | auto-fit solver, context search, fallback ranking and size parsing |
@@ -555,19 +556,22 @@ goroutine.
 | Hardware | CPU/RAM/GPU sparklines, VRAM, temperature, power, fan |
 | Logs | structured request table by default, raw log fallback, follow/pause, model filter and scroll |
 | Bench | recorded benchmark runs, trends, run comparison |
+| Discovered | GGUF files under `model_dirs`, metadata, configured/duplicate status, add flow and scan warnings |
 
 ### Keys
 
 | Key | Action |
 | --- | --- |
 | `tab` / `shift+tab` | next / previous tab |
-| `1`..`8` | jump to tab |
+| `1`..`9` | jump to tab |
 | `j` / `k`, arrows | move selection or scroll logs |
 | `g` / `G` | first / last entry; in logs, tail or follow |
 | `enter` | start selected target, load selected router model, or switch log target |
 | `s` / `x` | start / stop the standalone server (x dismisses a crash card) |
 | `S` | restart the selected target or the crashed server |
-| `r` / `R` | start / stop the router |
+| `r` / `R` | start / stop the router; `r` rescans on the Discovered tab |
+| `a` | add the selected discovered model (Discovered tab) |
+| `w` | load a group (Router tab), or show scan warnings (Discovered tab) |
 | `l` / `u` | load / unload the selected router model |
 | `i` | focus the Inference panel |
 | `m` | cycle the Inference source (server / router model), or the Logs model filter; elsewhere, show router-model stats |
@@ -606,7 +610,8 @@ completion for command names and model/preset IDs.
 /doctor                 run readiness checks
 /endpoint [server|router|MODEL]  show endpoint details and client snippets
 /theme [name]           cycle or set a theme
-/tab NAME               dashboard, models, presets, router, inference, hardware, logs, bench
+/tab NAME               dashboard, models, presets, router, inference, hardware, logs, bench, discovered
+/discover               scan model_dirs and show discovered models
 /logs [server|router]   show a log
 /help                   key and command reference
 /quit                   exit
@@ -1110,6 +1115,8 @@ wool bench --url URL --model ID      benchmark an already-running server
 wool bench history [TARGET]          show recorded benchmark runs
 wool bench compare A B [options]     interleaved A/B benchmark comparison
 wool list [--json]                   list models and presets
+wool models scan [--json] [--jobs N] [--follow]  discover GGUF models
+wool models add PATH [--id ID] [--alias ALIAS] [--json]
 wool run TARGET [options]            start a model or preset detached
 wool supervise [options] TARGET      run a target under a detached supervisor
 wool restart [server|router] [--no-wait]  relaunch the recorded instance

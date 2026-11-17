@@ -105,6 +105,41 @@ func TestReadMeta(t *testing.T) {
 	}
 }
 
+func TestReadMetaNameAndParameters(t *testing.T) {
+	path := writeTestGGUF(t, 3, []testKV{
+		{"general.name", 8, "Tiny Test Model"},
+		{"general.architecture", 8, "llama"},
+		{"general.parameter_count", 10, uint64(123456789)},
+		{"llama.block_count", 4, uint32(2)},
+		{"llama.embedding_length", 4, uint32(8)},
+		{"llama.attention.head_count", 4, uint32(2)},
+	})
+	m, err := ReadMeta(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.Name != "Tiny Test Model" || m.ParameterCount != 123456789 {
+		t.Fatalf("meta = %+v", m)
+	}
+	if got := m.Parameters(); got != 123456789 {
+		t.Fatalf("Parameters() = %d", got)
+	}
+}
+
+func TestParametersFallsBackToTensors(t *testing.T) {
+	m := Meta{Tensors: []TensorInfo{
+		{Dims: []uint64{2, 3}},
+		{Dims: []uint64{5}},
+	}}
+	if got := m.Parameters(); got != 11 {
+		t.Fatalf("Parameters() = %d, want 11", got)
+	}
+	m.ParameterCount = 42
+	if got := m.Parameters(); got != 42 {
+		t.Fatalf("Parameters() with declared count = %d, want 42", got)
+	}
+}
+
 func TestReadMetaScalarKVHeads(t *testing.T) {
 	path := writeTestGGUF(t, 2, []testKV{
 		{"general.architecture", 8, "qwen3"},

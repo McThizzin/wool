@@ -33,6 +33,8 @@ Usage:
   wool bench history [TARGET]          show recorded benchmark runs
   wool bench compare A B [options]     interleaved A/B benchmark comparison
   wool list [--json]                   list models and presets
+  wool models scan [--json] [--jobs N] [--follow]  discover GGUF models
+  wool models add PATH [--id ID] [--alias ALIAS] [--json]
   wool run TARGET [options]            start a model or preset detached
   wool supervise [options] TARGET      run a target under a detached supervisor
   wool restart [server|router] [--no-wait]  relaunch the recorded instance
@@ -126,6 +128,8 @@ func run(args []string) int {
 		return cmdConfig(cfgPath, rest)
 	case "list":
 		return cmdList(cfgPath, rest)
+	case "models":
+		return cmdModels(cfgPath, rest)
 	case "run", "start":
 		return cmdRun(cfgPath, rest)
 	case "supervise":

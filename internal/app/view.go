@@ -49,29 +49,36 @@ func (m *Model) View() string {
 
 func (m *Model) headerView() string {
 	st := m.render.Styles
-	build := func(compact bool) string {
+	build := func(numbers, dense bool) string {
 		var tabs []string
 		sep := " "
-		if compact {
+		if numbers {
 			sep = ""
+		}
+		pad := 1
+		if dense {
+			pad = 0
 		}
 		for i, name := range tabTitles {
 			label := fmt.Sprintf("[%d] %s", i+1, name)
-			if compact {
+			if numbers {
 				label = fmt.Sprintf("[%d]", i+1)
 			}
 			if tab(i) == m.tab {
-				tabs = append(tabs, st.Selected.Padding(0, 1).Render(label))
+				tabs = append(tabs, st.Selected.Padding(0, pad).Render(label))
 			} else {
-				tabs = append(tabs, st.Muted.Padding(0, 1).Render(label))
+				tabs = append(tabs, st.Muted.Padding(0, pad).Render(label))
 			}
 		}
 		return "  " + strings.Join(tabs, sep)
 	}
 	title := st.App.Bold(true).Render("wool") + "  "
-	left := build(false)
+	left := build(false, false)
 	if lipgloss.Width(left)+lipgloss.Width(title)+1 > m.width {
-		left = build(true)
+		left = build(false, true)
+	}
+	if lipgloss.Width(left)+lipgloss.Width(title)+1 > m.width {
+		left = build(true, false)
 	}
 	return sides(left, title, m.width)
 }
@@ -136,6 +143,8 @@ func (m *Model) mainPanel(w, h int) string {
 		return m.render.Panel(m.render.Icons.Logs+" Logs", m.logRight(), m.logsBody(w, h-2), w, h, focused)
 	case tabBench:
 		return m.render.Panel(m.render.Icons.Activity+" Bench", m.benchRight(), m.benchBody(w, h-2), w, h, focused)
+	case tabDiscovered:
+		return m.render.Panel(m.render.Icons.Model+" Discovered", m.discoveredRight(), m.discoveredBody(w, h-2), w, h, focused)
 	}
 	return ""
 }
@@ -173,6 +182,8 @@ func (m *Model) footerView() string {
 		hints = "enter run · esc cancel · tab complete"
 	} else if m.tab == tabBench {
 		hints = "j/k move · space mark · enter compare · f filter · D config diff · B bench · ? help · q quit"
+	} else if m.tab == tabDiscovered {
+		hints = "j/k move · enter/a add · r rescan · w warnings · tab switch · ? help · q quit"
 	} else if m.tab == tabInference {
 		hints = "m switch source · j/k select router model · L logs · B bench · ? help · q quit"
 	} else if m.tab == tabLogs {

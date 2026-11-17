@@ -15,16 +15,21 @@ import (
 
 const magic = 0x46554747 // "GGUF" little-endian
 
-// Meta is the subset of GGUF metadata needed for a memory estimate.
+// Meta is the subset of GGUF metadata needed for a memory estimate and model
+// discovery.
 type Meta struct {
+	Name         string `json:"name,omitempty"`
 	Architecture string `json:"architecture"`
-	BlockCount   int    `json:"block_count"`
-	Embedding    int    `json:"embedding"`
-	HeadCount    int    `json:"head_count"`
-	HeadCountKV  []int  `json:"head_count_kv,omitempty"` // per layer; empty means use HeadCount
-	KeyLength    int    `json:"key_length"`
-	ValueLength  int    `json:"value_length"`
-	CtxTrain     int    `json:"ctx_train"`
+	// ParameterCount comes from general.parameter_count when present. Models
+	// that omit it fall back to the sum of tensor dimensions.
+	ParameterCount uint64 `json:"parameter_count,omitempty"`
+	BlockCount     int    `json:"block_count"`
+	Embedding      int    `json:"embedding"`
+	HeadCount      int    `json:"head_count"`
+	HeadCountKV    []int  `json:"head_count_kv,omitempty"` // per layer; empty means use HeadCount
+	KeyLength      int    `json:"key_length"`
+	ValueLength    int    `json:"value_length"`
+	CtxTrain       int    `json:"ctx_train"`
 	// FullAttentionInterval is set by hybrid architectures (qwen35 and
 	// friends): only every Nth layer keeps a KV cache, the rest are
 	// recurrent and use constant-size state.
@@ -148,7 +153,9 @@ func readMeta(rd io.Reader) (Meta, error) {
 		return v, ok
 	}
 	meta := Meta{
+		Name:                  raw["general.name"].s,
 		Architecture:          arch,
+		ParameterCount:        asUint(raw["general.parameter_count"]),
 		BlockCount:            asInt(getOr(get, "block_count")),
 		Embedding:             asInt(getOr(get, "embedding_length")),
 		HeadCount:             asInt(getOr(get, "attention.head_count")),
@@ -285,7 +292,8 @@ func getOr(get func(string) (value, bool), suffix string) value {
 }
 
 func wantedKey(key string) bool {
-	if key == "general.architecture" {
+	switch key {
+	case "general.architecture", "general.name", "general.parameter_count":
 		return true
 	}
 	switch {
@@ -313,4 +321,11 @@ func asInt(v value) int {
 		return 0
 	}
 	return int(v.u)
+}
+
+func asUint(v value) uint64 {
+	if v.kind != kindUint {
+		return 0
+	}
+	return v.u
 }

@@ -32,7 +32,8 @@
 - **Crash detection and restart.** If a recorded server dies while wool is attached, the dashboard shows a crash card with the inferred reason (OOM, port conflict, model-load failure, signal or unknown) and the relevant log lines. `S` or `wool restart` relaunches the recorded argv, and an opt-in `[server] restart` policy can retry automatically with exponential backoff, a sliding attempt window and a cap. A clean `wool stop` never triggers a restart. `wool supervise TARGET` runs the standalone server under a detached supervisor that keeps retrying even after the TUI or CLI exits.
 - **Hardware telemetry.** CPU, RAM, AMD `amdgpu` VRAM, temperature, power, fan, and sparklines, with no extra daemon required.
 - **Preset and model editing.** Edit resolved launch options in the TUI; changes are written back to TOML with comments and ordering preserved. Changing `ctx`, cache type, `gpu_layers` or `n_cpu_moe` previews the new estimate without saving.
-- **Eight tabs, themes, commands.** Dashboard, Models, Presets, Router, Inference, Hardware, Logs, Bench; built-in and custom themes; slash commands and completion.
+- **Model discovery.** `wool models scan` walks `app.model_dirs` for GGUF files, reads architecture, parameter count, native context and size, and reports configured, missing and duplicate entries. Partial downloads and unreadable files become warnings. `wool models add` or the Discovered tab writes a new `[models.<id>]` with `path` and `alias` through the comment-preserving writer; scanning runs in the background with a bounded worker pool.
+- **Nine tabs, themes, commands.** Dashboard, Models, Presets, Router, Inference, Hardware, Logs, Bench, Discovered; built-in and custom themes; slash commands and completion.
 - **Doctor.** Checks the binary, model files, hardware, and VRAM fit before you launch.
 
 ## Requirements
@@ -90,6 +91,8 @@ wool bench --url URL --model ID      benchmark an already-running server
 wool bench history [TARGET]          show recorded benchmark runs
 wool bench compare A B [options]     interleaved A/B benchmark comparison
 wool list [--json]                   list models and presets
+wool models scan [--json] [--jobs N] [--follow]  discover GGUF models
+wool models add PATH [--id ID] [--alias ALIAS] [--json]
 wool run TARGET [options]            start a model or preset detached
 wool supervise [options] TARGET      run a target under a detached supervisor
 wool restart [server|router] [--no-wait]  relaunch the recorded instance
@@ -125,6 +128,25 @@ router model ID. The model ID is read from the running instance, so it matches
 what clients should send. Snippets use the placeholder key `not-needed`;
 llama-server ignores the key and wool never prints a credential. `--json` emits
 the stable versioned result for scripts.
+
+`wool models scan` walks every `app.model_dirs` entry recursively, reads GGUF
+metadata and compares the files with `[models.*]`. It skips partial downloads
+by default and prints configured, new, missing and duplicate entries plus
+non-fatal warnings. `--jobs N` bounds concurrent metadata reads (default 4,
+maximum 32), and `--follow` includes symlinks with loop detection. `--json`
+prints the stable report for scripts.
+
+`wool models add PATH` derives the ID from the filename and the alias from the
+GGUF `general.name`, then writes `[models.<id>]` with `path` and `alias` while
+preserving comments and the rest of the file. `--id` and `--alias` override the
+suggestions; an existing ID or path is refused. The TUI has the same flow on
+the Discovered tab: `enter` or `a` confirms, `r` rescans and `w` shows warnings.
+For example:
+
+```sh
+wool models scan
+wool models add ~/models/Qwen3-4B.gguf --id qwen3-4b --alias "Qwen3 4B"
+```
 
 `wool fit TARGET` accepts a preset name or model ID plus `--vram SIZE`,
 `--cache-type TYPE`, `--gpu-layers N`, `--n-cpu-moe N`, `--save-preset NAME`,

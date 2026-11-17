@@ -382,7 +382,7 @@ func (m *Model) showHelp() {
 	m.overlay = strings.Join([]string{
 		"keys",
 		"  tab / shift+tab        next / previous tab",
-		"  1..8                   jump to a tab",
+		"  1..9                   jump to a tab",
 		"  j/k, up/down           move selection",
 		"  g/G                    first / last entry",
 		"  enter                  start selected server, load router model or compare bench runs",
@@ -396,6 +396,9 @@ func (m *Model) showHelp() {
 		"  v                      show the raw log instead of the request table",
 		"  L                      focus the logs tab (enter toggles target)",
 		"  B                      focus the bench history tab",
+		"  a                      add the selected discovered model (Discovered tab)",
+		"  r                      rescan model_dirs (Discovered tab), or start the router",
+		"  w                      show scan warnings (Discovered tab), or load a group",
 		"  E                      show the endpoint helper (base URL, model and snippets)",
 		"  space                  mark a benchmark run for comparison",
 		"  f                      follow logs, or cycle the bench target filter",
@@ -423,7 +426,8 @@ func (m *Model) showHelp() {
 		"  /fit                   open the option editor and fit overlay",
 		"  /doctor                run readiness checks",
 		"  /theme [name]          switch theme",
-		"  /tab NAME              jump to dashboard, models, presets, router, inference, hardware, logs, bench",
+		"  /tab NAME              jump to dashboard, models, presets, router, inference, hardware, logs, bench, discovered",
+		"  /discover              scan model_dirs and show discovered models",
 		"  /bench [TARGET|all]    show benchmark history, optionally filtered",
 		"  /bench compare A B     compare the newest run of two targets",
 		"  /logs [server|router]  show a log",
@@ -583,10 +587,11 @@ func (m *Model) runCommand(line string) (tea.Cmd, bool) {
 		}
 		for i, name := range tabNames {
 			if name == args[0] {
-				m.setTab(tab(i))
-				break
+				return m.setTab(tab(i)), true
 			}
 		}
+	case "discover", "models":
+		return m.setTab(tabDiscovered), true
 	case "bench":
 		if len(args) > 0 && args[0] == "compare" {
 			m.benchCompareCommand(args[1:])

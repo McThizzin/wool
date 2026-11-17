@@ -10,7 +10,7 @@ import (
 
 var commandNames = []string{
 	"start", "restart", "stop", "dismiss", "router", "load", "unload", "load-group", "reload",
-	"edit", "fit", "doctor", "theme", "tab", "bench", "logs", "endpoint", "help", "quit",
+	"edit", "fit", "doctor", "theme", "tab", "bench", "discover", "logs", "endpoint", "help", "quit",
 }
 
 func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -22,6 +22,9 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	if m.groupPick {
 		return m.updateGroupPicker(msg)
+	}
+	if m.discoveryAdd {
+		return m.updateDiscoverConfirm(msg)
 	}
 	if m.overlay != "" {
 		if m.endpointOpen {
@@ -64,11 +67,11 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.clearBenchMark()
 		}
 	case "tab":
-		m.setTab((m.tab + 1) % tabCount)
+		return m, m.setTab((m.tab + 1) % tabCount)
 	case "shift+tab":
-		m.setTab((m.tab - 1 + tabCount) % tabCount)
-	case "1", "2", "3", "4", "5", "6", "7", "8":
-		m.setTab(tab(msg.String()[0] - '1'))
+		return m, m.setTab((m.tab - 1 + tabCount) % tabCount)
+	case "1", "2", "3", "4", "5", "6", "7", "8", "9":
+		return m, m.setTab(tab(msg.String()[0] - '1'))
 	case "j", "down":
 		switch m.tab {
 		case tabLogs:
@@ -121,7 +124,14 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, m.restartCrashed()
 		}
 		return m, m.restartServer()
+	case "a":
+		if m.tab == tabDiscovered {
+			m.openDiscoverAdd()
+		}
 	case "r":
+		if m.tab == tabDiscovered {
+			return m, m.startDiscovery()
+		}
 		return m, m.startRouter()
 	case "R":
 		return m, m.stopRouter()
@@ -130,6 +140,10 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "u":
 		return m, m.routerAction(false)
 	case "w":
+		if m.tab == tabDiscovered {
+			m.showDiscoveryWarnings()
+			return m, nil
+		}
 		if m.tab != tabRouter {
 			m.setToast("groups are on the router tab")
 			return m, nil
@@ -158,11 +172,11 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 		}
 	case "i":
-		m.setTab(tabInference)
+		return m, m.setTab(tabInference)
 	case "L":
-		m.setTab(tabLogs)
+		return m, m.setTab(tabLogs)
 	case "B":
-		m.setTab(tabBench)
+		return m, m.setTab(tabBench)
 	case "E":
 		m.showEndpoint("")
 	case "e":
@@ -226,6 +240,8 @@ func (m *Model) enterAction() tea.Cmd {
 		m.loadLogs()
 	case tabBench:
 		m.showBenchCompare()
+	case tabDiscovered:
+		m.openDiscoverAdd()
 	}
 	return nil
 }

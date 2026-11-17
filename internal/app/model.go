@@ -10,6 +10,7 @@ import (
 	"wool/internal/alerts"
 	"wool/internal/config"
 	"wool/internal/daemon"
+	"wool/internal/discovery"
 	"wool/internal/endpoint"
 	"wool/internal/gguf"
 	"wool/internal/llamaserver"
@@ -31,11 +32,12 @@ const (
 	tabHardware
 	tabLogs
 	tabBench
+	tabDiscovered
 	tabCount
 )
 
-var tabNames = []string{"dashboard", "models", "presets", "router", "inference", "hardware", "logs", "bench"}
-var tabTitles = []string{"Dashboard", "Models", "Presets", "Router", "Inference", "Hardware", "Logs", "Bench"}
+var tabNames = []string{"dashboard", "models", "presets", "router", "inference", "hardware", "logs", "bench", "discovered"}
+var tabTitles = []string{"Dashboard", "Models", "Presets", "Router", "Inference", "Hardware", "Logs", "Bench", "Discovered"}
 
 func (t tab) String() string {
 	if t < 0 || int(t) >= len(tabNames) {
@@ -129,6 +131,12 @@ type Model struct {
 	benchErr     string
 	benchStamp   string
 	benchLoaded  bool
+
+	discovery     discovery.Report
+	discoveredSel int
+	discoveryBusy bool
+	discoveryDone bool
+	discoveryAdd  bool
 
 	alertEngine *alerts.Engine
 	alertList   []alerts.Alert
@@ -254,6 +262,15 @@ type doctorMsg struct {
 	text     string
 	failures int
 	err      error
+}
+
+type discoveryMsg struct {
+	report discovery.Report
+}
+
+type discoveryAddMsg struct {
+	id  string
+	err error
 }
 
 // Run starts the TUI. Servers keep running when it exits.

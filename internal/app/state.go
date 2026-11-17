@@ -6,6 +6,8 @@ import (
 	"os"
 	"time"
 
+	tea "github.com/charmbracelet/bubbletea"
+
 	"wool/internal/alerts"
 	"wool/internal/config"
 	"wool/internal/daemon"
@@ -89,6 +91,7 @@ func (m *Model) clampSelections() {
 	m.presetSel = clamp(m.presetSel, 0, maxInt(0, len(m.presets)-1))
 	m.modelSel = clamp(m.modelSel, 0, maxInt(0, len(m.models)-1))
 	m.routerSel = clamp(m.routerSel, 0, maxInt(0, len(m.routerModels)-1))
+	m.discoveredSel = clamp(m.discoveredSel, 0, maxInt(0, len(m.discovery.Entries)-1))
 	if len(m.routerModels) > 0 && m.routerSel < len(m.routerModels) {
 		m.routerSelID = m.routerModels[m.routerSel].ID
 	}
@@ -300,15 +303,17 @@ func (m *Model) moveSelection(delta int) {
 		m.routerSelID = m.selectedRouterID()
 	case tabBench:
 		m.benchSel = clamp(m.benchSel+delta, 0, maxInt(0, len(m.benchRuns)-1))
+	case tabDiscovered:
+		m.discoveredSel = clamp(m.discoveredSel+delta, 0, maxInt(0, len(m.discovery.Entries)-1))
 	default:
 		return
 	}
 	m.ensureFit()
 }
 
-func (m *Model) setTab(t tab) {
+func (m *Model) setTab(t tab) tea.Cmd {
 	if t < 0 || t >= tabCount {
-		return
+		return nil
 	}
 	m.tab = t
 	if t == tabLogs && m.logName == "" {
@@ -325,6 +330,10 @@ func (m *Model) setTab(t tab) {
 		m.loadBenchHistory()
 	}
 	m.ensureFit()
+	if t == tabDiscovered && !m.discoveryBusy {
+		return m.startDiscovery()
+	}
+	return nil
 }
 
 func (m *Model) cycleTheme(delta int) {

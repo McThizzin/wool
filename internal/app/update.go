@@ -122,6 +122,27 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.setToast("doctor: no failures")
 		}
 		return m, nil
+	case discoveryMsg:
+		m.busy = ""
+		m.discoveryBusy = false
+		m.discoveryDone = true
+		m.discovery = msg.report
+		m.clampSelections()
+		if len(msg.report.Entries) == 0 {
+			m.setToast("discovery: no GGUF files found")
+		} else {
+			m.setToast(fmt.Sprintf("discovery: %d file(s), %d new", len(msg.report.Entries), m.newDiscoveredCount()))
+		}
+		return m, nil
+	case discoveryAddMsg:
+		m.busy = ""
+		if msg.err != nil {
+			m.setToast("add model: " + oneLine(msg.err.Error(), 120))
+			return m, nil
+		}
+		m.reloadConfig()
+		m.setToast("added model " + msg.id)
+		return m, m.startDiscovery()
 	case tea.KeyMsg:
 		return m.handleKey(msg)
 	}
