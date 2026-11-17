@@ -15,6 +15,7 @@ import (
 	"wool/internal/gguf"
 	"wool/internal/measure"
 	"wool/internal/sysinfo"
+	"wool/internal/ui"
 )
 
 func Run(cfg *config.Config, cfgPath string) Report {
@@ -281,16 +282,7 @@ func firstLine(s string) string {
 }
 
 func humanBytes(n uint64) string {
-	const unit = 1024
-	if n < unit {
-		return fmt.Sprintf("%d B", n)
-	}
-	div, exp := uint64(unit), 0
-	for m := n / unit; m >= unit && exp < 4; m /= unit {
-		div *= unit
-		exp++
-	}
-	return fmt.Sprintf("%.1f %ciB", float64(n)/float64(div), "KMGTPE"[exp])
+	return ui.HumanBytes(n)
 }
 
 // estimateLine formats the estimate decomposition, limiting term and headroom.

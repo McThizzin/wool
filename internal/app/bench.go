@@ -189,14 +189,14 @@ func (m *Model) showBenchCompareRecords(base, next measure.Record) {
 		lines = append(lines, fmt.Sprintf("  %-14s %-18s →  %s", name, a, b))
 	}
 	field("target", measure.BenchTargetName(base), measure.BenchTargetName(next))
-	field("model", fallbackDash(base.ModelID), fallbackDash(next.ModelID))
+	field("model", fallback(base.ModelID, "-"), fallback(next.ModelID, "-"))
 	field("ctx", fmt.Sprint(base.Ctx), fmt.Sprint(next.Ctx))
-	field("cache k", fallbackDash(base.CacheTypeK), fallbackDash(next.CacheTypeK))
-	field("cache v", fallbackDash(base.CacheTypeV), fallbackDash(next.CacheTypeV))
+	field("cache k", fallback(base.CacheTypeK, "-"), fallback(next.CacheTypeK, "-"))
+	field("cache v", fallback(base.CacheTypeV, "-"), fallback(next.CacheTypeV, "-"))
 	field("gpu layers", fmt.Sprint(base.GPULayers), fmt.Sprint(next.GPULayers))
 	field("n_cpu_moe", fmt.Sprint(base.NCPUMoE), fmt.Sprint(next.NCPUMoE))
 	field("engine", benchEngine(base), benchEngine(next))
-	field("config hash", fallbackDash(base.ConfigHash), fallbackDash(next.ConfigHash))
+	field("config hash", fallback(base.ConfigHash, "-"), fallback(next.ConfigHash, "-"))
 	if changes == 0 {
 		lines = append(lines, "  launch options and config hash are identical")
 	}
@@ -328,7 +328,7 @@ func benchEngine(r measure.Record) string {
 	if r.Bench == nil {
 		return "-"
 	}
-	engine := fallbackDash(r.Bench.Engine)
+	engine := fallback(r.Bench.Engine, "-")
 	if r.Bench.Attached {
 		engine += " attached"
 	}
@@ -354,13 +354,6 @@ func benchLoad(b *measure.Bench) string {
 		return "-"
 	}
 	return fmt.Sprintf("%.1fs", b.LoadMS/1000)
-}
-
-func fallbackDash(s string) string {
-	if s == "" {
-		return "-"
-	}
-	return s
 }
 
 func benchDelta(base, next float64) string {
