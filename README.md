@@ -32,7 +32,7 @@
 - **Crash detection and restart.** If a recorded server dies while wool is attached, the dashboard shows a crash card with the inferred reason (OOM, port conflict, model-load failure, signal or unknown) and the relevant log lines. `S` or `wool restart` relaunches the recorded argv, and an opt-in `[server] restart` policy can retry automatically with exponential backoff, a sliding attempt window and a cap. A clean `wool stop` never triggers a restart. `wool supervise TARGET` runs the standalone server under a detached supervisor that keeps retrying even after the TUI or CLI exits.
 - **Hardware telemetry.** CPU, RAM, AMD `amdgpu` VRAM, temperature, power, fan, and sparklines, with no extra daemon required.
 - **Preset and model editing.** Edit resolved launch options in the TUI; changes are written back to TOML with comments and ordering preserved. Changing `ctx`, cache type, `gpu_layers` or `n_cpu_moe` previews the new estimate without saving.
-- **Model discovery.** `wool models scan` walks `app.model_dirs` for GGUF files, reads architecture, parameter count, native context and size, and reports configured, missing and duplicate entries. Partial downloads and unreadable files become warnings. `wool models add` or the Discovered tab writes a new `[models.<id>]` with `path` and `alias` through the comment-preserving writer; scanning runs in the background with a bounded worker pool.
+- **Model discovery.** `wool models scan` walks `app.model_dirs` for GGUF files, reads architecture, parameter count, native context and size, and reports configured, missing and duplicate entries. Partial downloads and unreadable files become warnings. `wool models add` or the Discovered tab writes a new `[models.<id>]` with `path` and `alias` through the comment-preserving writer; scanning runs in the background with a bounded worker pool. `wool models disk` reports per-model size, total usage, models unused by any preset, duplicate paths and missing files without writing anything; opt-in `--hash` compares full file contents.
 - **Nine tabs, themes, commands.** Dashboard, Models, Presets, Router, Inference, Hardware, Logs, Bench, Discovered; built-in and custom themes; slash commands and completion.
 - **Doctor.** Checks the binary, model files, hardware, and VRAM fit before you launch.
 
@@ -93,6 +93,7 @@ wool bench compare A B [options]     interleaved A/B benchmark comparison
 wool list [--json]                   list models and presets
 wool models scan [--json] [--jobs N] [--follow]  discover GGUF models
 wool models add PATH [--id ID] [--alias ALIAS] [--json]
+wool models disk [--json] [--hash]   sizes, unused, duplicates and missing files
 wool run TARGET [options]            start a model or preset detached
 wool supervise [options] TARGET      run a target under a detached supervisor
 wool restart [server|router] [--no-wait]  relaunch the recorded instance
@@ -147,6 +148,13 @@ For example:
 wool models scan
 wool models add ~/models/Qwen3-4B.gguf --id qwen3-4b --alias "Qwen3 4B"
 ```
+
+`wool models disk` is a read-only inventory of `[models.*]`: per-model size,
+total usage over unique files, models unused by any preset, duplicate paths and
+missing or unreadable files. The default duplicate-content check uses size and
+GGUF metadata identity; `--hash` reads every file in full and compares SHA-256
+digests, which is much slower but exact. `--json` emits the stable report. The
+Models tab shows the same summary, with `SIZE`, `USE` and `STATUS` columns.
 
 `wool fit TARGET` accepts a preset name or model ID plus `--vram SIZE`,
 `--cache-type TYPE`, `--gpu-layers N`, `--n-cpu-moe N`, `--save-preset NAME`,

@@ -137,6 +137,7 @@ type Model struct {
 	discoveryBusy bool
 	discoveryDone bool
 	discoveryAdd  bool
+	disk          discovery.DiskReport
 
 	alertEngine *alerts.Engine
 	alertList   []alerts.Alert
@@ -316,6 +317,7 @@ func newModel(cfg *config.Config, cfgPath string, mgr *daemon.Manager) *Model {
 	m.presets = cfg.PresetIDs()
 	m.models = cfg.ModelIDs()
 	m.groups = cfg.GroupIDs()
+	m.refreshDisk()
 	snap, _ := m.sys.Sample()
 	m.snap = snap
 	m.hist.Push(snap)

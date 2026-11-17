@@ -35,6 +35,7 @@ Usage:
   wool list [--json]                   list models and presets
   wool models scan [--json] [--jobs N] [--follow]  discover GGUF models
   wool models add PATH [--id ID] [--alias ALIAS] [--json]
+  wool models disk [--json] [--hash]   sizes, unused, duplicates and missing files
   wool run TARGET [options]            start a model or preset detached
   wool supervise [options] TARGET      run a target under a detached supervisor
   wool restart [server|router] [--no-wait]  relaunch the recorded instance

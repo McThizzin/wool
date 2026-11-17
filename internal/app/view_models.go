@@ -2,33 +2,53 @@ package app
 
 import (
 	"fmt"
+
+	"wool/internal/discovery"
 	"wool/internal/ui"
 )
+
+func (m *Model) modelsRight() string {
+	if len(m.models) == 0 {
+		return "0 configured"
+	}
+	return fmt.Sprintf("%s · %d configured", ui.HumanBytes(m.disk.TotalBytes), len(m.models))
+}
 
 func (m *Model) modelsBody(w, h int) []string {
 	st := m.render.Styles
 	if len(m.models) == 0 {
 		return []string{st.Muted.Render("no models configured")}
 	}
-	visible := h - 1
+	summary := fmt.Sprintf("%s on disk · %d unused · %d missing",
+		ui.HumanBytes(m.disk.TotalBytes), len(m.disk.Unused), m.disk.Missing)
+	if len(m.disk.DuplicatePaths) > 0 {
+		summary += fmt.Sprintf(" · %d duplicate path(s)", len(m.disk.DuplicatePaths))
+	}
+	lines := []string{st.Muted.Render(ui.Fit(summary, w-2))}
+	header := fmt.Sprintf("%-20s %-9s %-9s %-5s %-10s %s",
+		"ID", "SIZE", "FIT", "USE", "STATUS", "ALIAS")
+	lines = append(lines, st.Muted.Render(ui.Fit(header, w-2)))
+
+	visible := h - len(lines)
 	start := windowStart(m.modelSel, visible, len(m.models))
-	var lines []string
-	for i := start; i < len(m.models) && len(lines) < visible; i++ {
+	for i := start; i < len(m.models) && len(lines) < h; i++ {
 		id := m.models[i]
-		mc := m.cfg.Models[id]
-		size := ""
-		if entry, ok := m.meta[abs(mc.Path)]; ok {
-			if entry.Ready {
-				size = ui.HumanBytes(entry.Size)
-			} else if _, err := statFile(abs(mc.Path)); err != nil {
-				size = "missing"
+		dm, _ := m.disk.Find(id)
+		size := "-"
+		if dm.Status == discovery.DiskStatusOK {
+			size = ui.HumanBytes(dm.Size)
+		}
+		use := "-"
+		if len(dm.Presets) > 0 {
+			use = fmt.Sprintf("%d", len(dm.Presets))
+		}
+		status := dm.Status
+		if dm.DuplicatePath {
+			if status == discovery.DiskStatusOK {
+				status = "dup path"
 			} else {
-				size = "unreadable"
+				status += " dup"
 			}
-		} else if sz, err := statFile(abs(mc.Path)); err == nil {
-			size = ui.HumanBytes(sz)
-		} else {
-			size = "missing"
 		}
 		fit := m.fitFor(id, "model")
 		fitText := "-"
@@ -38,7 +58,8 @@ func (m *Model) modelsBody(w, h int) []string {
 				fitText += " !"
 			}
 		}
-		line := fmt.Sprintf("%-22s %-9s %-9s %s", truncate(id, 22), size, fitText, mc.Alias)
+		line := fmt.Sprintf("%-20s %-9s %-9s %-5s %-10s %s",
+			truncate(id, 20), size, fitText, use, status, dm.Alias)
 		if i == m.modelSel {
 			lines = append(lines, st.Selected.Render(ui.Fit(" "+line, w-2)))
 		} else {

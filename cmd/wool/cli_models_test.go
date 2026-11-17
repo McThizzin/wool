@@ -198,3 +198,134 @@ func TestCmdModelsAddRejectsMissingPath(t *testing.T) {
 		t.Fatalf("exit = %d, stderr = %s", code, stderr)
 	}
 }
+
+func TestCmdModelsDiskJSONIsReadOnly(t *testing.T) {
+	dir := t.TempDir()
+	used := filepath.Join(dir, "used.gguf")
+	unused := filepath.Join(dir, "unused.gguf")
+	copyPath := filepath.Join(dir, "copy.gguf")
+	writeModelGGUF(t, used, "Used", "llama", 3_000_000_000)
+	writeModelGGUF(t, unused, "Unused", "llama", 1_000_000_000)
+	data, err := os.ReadFile(used)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(copyPath, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfgPath := writeModelsConfig(t, dir)
+	cfg, err := config.Load(cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for id, path := range map[string]string{"used": used, "unused": unused, "copy": copyPath} {
+		if err := cfg.AddModel(cfgPath, id, path, ""); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := config.SetValue(cfgPath, "presets.used", "model", `"used"`); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	out, code := captureStdout(t, func() int {
+		return cmdModels(cfgPath, []string{"disk", "--json"})
+	})
+	if code != 0 {
+		t.Fatalf("exit = %d, output = %s", code, out)
+	}
+	var rep discovery.DiskReport
+	if err := json.Unmarshal([]byte(out), &rep); err != nil {
+		t.Fatalf("invalid JSON: %v\n%s", err, out)
+	}
+	if len(rep.Models) != 3 {
+		t.Fatalf("models = %+v", rep.Models)
+	}
+	if len(rep.Unused) != 2 || rep.Unused[0] != "copy" || rep.Unused[1] != "unused" {
+		t.Fatalf("unused = %v", rep.Unused)
+	}
+	if rep.TotalBytes == 0 || rep.UniqueFiles != 3 {
+		t.Fatalf("total = %d over %d files", rep.TotalBytes, rep.UniqueFiles)
+	}
+	if rep.DuplicateDetection != "size+metadata" || len(rep.DuplicateContent) != 1 {
+		t.Fatalf("duplicates = %+v (%s)", rep.DuplicateContent, rep.DuplicateDetection)
+	}
+
+	after, err := os.ReadFile(cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(before) != string(after) {
+		t.Fatalf("disk command modified the config:\n%s\n---\n%s", before, after)
+	}
+}
+
+func TestCmdModelsDiskHash(t *testing.T) {
+	dir := t.TempDir()
+	first := filepath.Join(dir, "first.gguf")
+	writeModelGGUF(t, first, "Copy", "llama", 1_000)
+	data, err := os.ReadFile(first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second := filepath.Join(dir, "second.gguf")
+	if err := os.WriteFile(second, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfgPath := writeModelsConfig(t, dir)
+	cfg, err := config.Load(cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cfg.AddModel(cfgPath, "first", first, ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := cfg.AddModel(cfgPath, "second", second, ""); err != nil {
+		t.Fatal(err)
+	}
+
+	out, code := captureStdout(t, func() int {
+		return cmdModels(cfgPath, []string{"disk", "--hash", "--json"})
+	})
+	if code != 0 {
+		t.Fatalf("exit = %d, output = %s", code, out)
+	}
+	var rep discovery.DiskReport
+	if err := json.Unmarshal([]byte(out), &rep); err != nil {
+		t.Fatalf("invalid JSON: %v\n%s", err, out)
+	}
+	if rep.DuplicateDetection != "sha256" || len(rep.DuplicateContent) != 1 {
+		t.Fatalf("duplicates = %+v (%s)", rep.DuplicateContent, rep.DuplicateDetection)
+	}
+	if rep.DuplicateContent[0].Hash == "" {
+		t.Fatalf("hash missing: %+v", rep.DuplicateContent[0])
+	}
+}
+
+func TestCmdModelsDiskText(t *testing.T) {
+	dir := t.TempDir()
+	used := filepath.Join(dir, "used.gguf")
+	writeModelGGUF(t, used, "Used", "llama", 3_000_000_000)
+	cfgPath := writeModelsConfig(t, dir)
+	cfg, err := config.Load(cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cfg.AddModel(cfgPath, "used", used, ""); err != nil {
+		t.Fatal(err)
+	}
+	out, code := captureStdout(t, func() int {
+		return cmdModels(cfgPath, []string{"disk"})
+	})
+	if code != 0 {
+		t.Fatalf("exit = %d, output = %s", code, out)
+	}
+	for _, want := range []string{"total:", "unused by presets", "duplicate detection", "used"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("output missing %q:\n%s", want, out)
+		}
+	}
+}

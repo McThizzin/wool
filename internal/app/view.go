@@ -130,7 +130,7 @@ func (m *Model) mainPanel(w, h int) string {
 	case tabDashboard:
 		return m.render.Panel(m.render.Icons.Activity+" Dashboard", m.dashRight(), m.dashboardBody(w, h-2), w, h, focused)
 	case tabModels:
-		return m.render.Panel(m.render.Icons.Model+" Models", fmt.Sprintf("%d configured", len(m.models)), m.modelsBody(w, h-2), w, h, focused)
+		return m.render.Panel(m.render.Icons.Model+" Models", m.modelsRight(), m.modelsBody(w, h-2), w, h, focused)
 	case tabPresets:
 		return m.render.Panel(m.render.Icons.Preset+" Presets", fmt.Sprintf("%d recipes", len(m.presets)), m.presetsBody(w, h-2), w, h, focused)
 	case tabRouter:

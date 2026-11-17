@@ -65,7 +65,7 @@ supervisor owns the child, and both stay in the same process group.
 | `internal/app` | Bubble Tea model, tabs, overlays, key handling, actions |
 | `internal/config` | TOML schema, defaults, merge/resolve, validation, paths, comment-preserving edits, model add |
 | `internal/daemon` | detached process start/stop, state files, liveness checks, ports, log tailing |
-| `internal/discovery` | bounded GGUF scan over `model_dirs`, metadata, configured/duplicate grouping and add suggestions |
+| `internal/discovery` | bounded GGUF scan over `model_dirs`, metadata, configured/duplicate grouping, add suggestions and read-only disk/orphan inventory |
 | `internal/llamaserver` | single-server argv, router argv, `models.ini` generation, HTTP client |
 | `internal/gguf` | GGUF metadata reader and VRAM estimate |
 | `internal/fit` | auto-fit solver, context search, fallback ranking and size parsing |
@@ -261,6 +261,25 @@ counterpart: it deletes one scalar key, leaves an empty table header in place,
 and refuses multi-line or inline collection values. After a save or reset the
 config is reloaded and the relevant caches are invalidated. The TOML file
 remains the source of truth; there is no hidden state database.
+
+### Model discovery and disk reporting
+
+`internal/discovery` walks `app.model_dirs` for GGUF files with a bounded
+worker pool, reads metadata through `internal/gguf`, and groups files against
+the configured models using canonical paths. Partial downloads, unreadable
+directories and invalid GGUF headers become warnings. Symlinks are skipped
+unless `--follow` is set, in which case real paths stop directory loops and
+duplicate files. Suggested IDs are filename slugs; aliases prefer
+`general.name`. `wool models add` writes the result through
+`config.SetValues`, so comments and unrelated sections survive.
+
+`discovery.Disk` is a separate read-only pass over `[models.*]`. It stats each
+path, reports `ok`, `missing` or `unreadable`, counts unique canonical files for
+total usage, and maps `[presets.*]` references to per-model usage. Duplicate
+paths come from canonical-path groups. Duplicate content uses size plus GGUF
+metadata by default; `--hash` switches to full-file SHA-256 and is much slower.
+The TUI calls the stat-only mode on tab entry and after a config reload, so it
+never hashes or reads model contents.
 
 ## Single-server launches
 
@@ -549,7 +568,7 @@ goroutine.
 | Tab | Contents |
 | --- | --- |
 | Dashboard | selected preset, resolved options, estimate breakdown and fit bar, log tail |
-| Models | configured models, file size, VRAM estimate, alias |
+| Models | configured models, disk summary, size, preset usage, status, VRAM estimate, alias |
 | Presets | recipes with model, context and fit |
 | Router | router state, model list, selected model stats and slots |
 | Inference | live prompt/gen tokens/s, requests, slot occupancy and KV fill, speculative acceptance, sparklines |
@@ -1117,6 +1136,7 @@ wool bench compare A B [options]     interleaved A/B benchmark comparison
 wool list [--json]                   list models and presets
 wool models scan [--json] [--jobs N] [--follow]  discover GGUF models
 wool models add PATH [--id ID] [--alias ALIAS] [--json]
+wool models disk [--json] [--hash]   sizes, unused, duplicates and missing files
 wool run TARGET [options]            start a model or preset detached
 wool supervise [options] TARGET      run a target under a detached supervisor
 wool restart [server|router] [--no-wait]  relaunch the recorded instance

@@ -329,6 +329,9 @@ func (m *Model) setTab(t tab) tea.Cmd {
 	if t == tabBench {
 		m.loadBenchHistory()
 	}
+	if t == tabModels {
+		m.refreshDisk()
+	}
 	m.ensureFit()
 	if t == tabDiscovered && !m.discoveryBusy {
 		return m.startDiscovery()
@@ -392,6 +395,7 @@ func (m *Model) reloadConfig() {
 	m.fitCache = map[string]fitInfo{}
 	m.meta = map[string]metaEntry{}
 	m.fitKey = ""
+	m.refreshDisk()
 	m.alertEngine = alerts.New(alerts.FromConfig(cfg.Alerts))
 	m.alertList = nil
 	m.alertCmd = nil

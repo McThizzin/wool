@@ -31,7 +31,7 @@ Status values: `planned`, `in progress`, `shipped`, `blocked`, `dropped`.
 | M4.7 — Router usage statistics | P2 | S/M | M1.3, M4.1 | shipped | [m4-07-router-usage-statistics.md](m4-07-router-usage-statistics.md) |
 | M4.8 — Endpoint helper | P3 | S | none | shipped | [m4-08-endpoint-helper.md](m4-08-endpoint-helper.md) |
 | M5.1 — Model discovery | P1 | M | none | shipped | [m5-01-model-discovery.md](m5-01-model-discovery.md) |
-| M5.2 — Disk and orphan view | P2 | S | M5.1 | planned | [m5-02-disk-and-orphan-view.md](m5-02-disk-and-orphan-view.md) |
+| M5.2 — Disk and orphan view | P2 | S | M5.1 | shipped | [m5-02-disk-and-orphan-view.md](m5-02-disk-and-orphan-view.md) |
 | M5.3 — Config validation with line numbers | P2 | S/M | none | planned | [m5-03-config-validation-with-line-numbers.md](m5-03-config-validation-with-line-numbers.md) |
 | M5.4 — Extra-flag editing and provenance | P1 | S/M | M1.1 | planned | [m5-04-extra-flag-editing-and-provenance.md](m5-04-extra-flag-editing-and-provenance.md) |
 | M5.5 — Flag catalog and fuzzy reference | P2 | M | M5.3, M5.4 | planned | [m5-05-flag-catalog-and-fuzzy-reference.md](m5-05-flag-catalog-and-fuzzy-reference.md) |
