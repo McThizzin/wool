@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"time"
+
+	"wool/internal/ui"
 )
 
 func durationOr(s string, fallback time.Duration) time.Duration {
@@ -15,14 +17,7 @@ func durationOr(s string, fallback time.Duration) time.Duration {
 }
 
 func humanTokensCLI(n int) string {
-	switch {
-	case n >= 1_000_000:
-		return fmt.Sprintf("%.1fM", float64(n)/1e6)
-	case n >= 1_000:
-		return fmt.Sprintf("%.1fk", float64(n)/1e3)
-	default:
-		return fmt.Sprintf("%d", n)
-	}
+	return ui.HumanTokens(n)
 }
 
 // trimTokens drops the fraction of a token count when it is integral.
@@ -43,8 +38,5 @@ func writeJSON(v any) int {
 	return 0
 }
 func fallbackDash(s string) string {
-	if s == "" {
-		return "-"
-	}
-	return s
+	return ui.Fallback(s, "-")
 }

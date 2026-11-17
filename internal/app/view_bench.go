@@ -86,7 +86,7 @@ func (m *Model) benchBody(w, h int) []string {
 			genTPS,
 			benchVRAM(r.Bench),
 			benchLoad(r.Bench),
-			truncate(fallbackDash(r.ConfigHash), 8),
+			truncate(fallback(r.ConfigHash, "-"), 8),
 		)
 		switch {
 		case i == m.benchSel:
@@ -103,7 +103,7 @@ func (m *Model) benchBody(w, h int) []string {
 		lines = append(lines,
 			st.Muted.Render(ui.Fit(fmt.Sprintf(" %s · %s · %s · config %s",
 				sel.At.Local().Format("2006-01-02 15:04"),
-				measure.BenchTargetName(sel), benchEngine(sel), fallbackDash(sel.ConfigHash)), w-2)),
+				measure.BenchTargetName(sel), benchEngine(sel), fallback(sel.ConfigHash, "-")), w-2)),
 			st.Muted.Render(ui.Fit(fmt.Sprintf(" prompt %.1f t/s · gen %.1f t/s · total %.0f ms · vram %s · load %s",
 				sel.Bench.Median.PromptTPS, sel.Bench.Median.GenerationTPS,
 				sel.Bench.Median.TotalMS, benchVRAM(sel.Bench), benchLoad(sel.Bench)), w-2)),

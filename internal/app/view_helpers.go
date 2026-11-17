@@ -22,10 +22,7 @@ func kv(k, v string) string {
 }
 
 func fallback(s, alt string) string {
-	if s == "" {
-		return alt
-	}
-	return s
+	return ui.Fallback(s, alt)
 }
 
 func boolWord(b bool) string {
@@ -104,28 +101,12 @@ func trimFloat(f float64) string {
 
 // humanTokens renders a token count with k/M suffixes.
 func humanTokens(n int) string {
-	switch {
-	case n >= 1_000_000:
-		return fmt.Sprintf("%.1fM", float64(n)/1e6)
-	case n >= 1_000:
-		return fmt.Sprintf("%.1fk", float64(n)/1e3)
-	default:
-		return fmt.Sprintf("%d", n)
-	}
+	return ui.HumanTokens(n)
 }
 
 // humanTokenCount is the uint64 form used for persisted usage counters.
 func humanTokenCount(n uint64) string {
-	switch {
-	case n >= 1_000_000_000:
-		return fmt.Sprintf("%.1fG", float64(n)/1e9)
-	case n >= 1_000_000:
-		return fmt.Sprintf("%.1fM", float64(n)/1e6)
-	case n >= 1_000:
-		return fmt.Sprintf("%.1fk", float64(n)/1e3)
-	default:
-		return fmt.Sprintf("%d", n)
-	}
+	return ui.HumanTokenCount(n)
 }
 
 // relativeAge renders a last-used time as a short age for the router table.
