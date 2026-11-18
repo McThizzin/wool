@@ -5,7 +5,7 @@ Part of [M5](../roadmap.md#milestone-m5). See the
 
 **Priority** P2 · **Size** M · **Depends** M5.3, M5.4
 
-**Status** planned
+**Status** shipped
 
 **Problem.** Users do not know which `llama-server` flags exist, what they do,
 or which ones take a value. The current reference is a hand-captured table that
@@ -39,19 +39,19 @@ drifts from the installed binary, and a typo only fails at launch.
 
 **Acceptance.**
 
-- [ ] Every catalog entry has a name, aliases, value shape, description,
+- [x] Every catalog entry has a name, aliases, value shape, description,
       source version and commit.
-- [ ] Fuzzy search matches names, aliases and descriptions with deterministic
+- [x] Fuzzy search matches names, aliases and descriptions with deterministic
       ranking.
-- [ ] Selecting a flag adds the correct bare or value-bearing form and warns
+- [x] Selecting a flag adds the correct bare or value-bearing form and warns
       about conflicts.
-- [ ] `wool flags --json` has a stable schema; `--check` reports new, missing
+- [x] `wool flags --json` has a stable schema; `--check` reports new, missing
       and changed flags.
-- [ ] Unknown or deprecated flags warn but do not block a launch unless strict
+- [x] Unknown or deprecated flags warn but do not block a launch unless strict
       mode is requested.
-- [ ] The Markdown reference regenerates from the catalog without hand edits.
-- [ ] Doctor shows the catalog and installed binary versions.
-- [ ] Parser tests use fixtures from more than one help-text version.
+- [x] The Markdown reference regenerates from the catalog without hand edits.
+- [x] Doctor shows the catalog and installed binary versions.
+- [x] Parser tests use fixtures from more than one help-text version.
 
 **Risk.** `llama-server --help` is not a stable API. Parse conservatively, keep
 curated overrides, and never turn the catalog into an allowlist. A stale

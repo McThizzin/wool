@@ -10,12 +10,15 @@ import (
 
 var commandNames = []string{
 	"start", "restart", "stop", "dismiss", "router", "load", "unload", "load-group", "reload",
-	"edit", "fit", "doctor", "theme", "tab", "bench", "discover", "logs", "endpoint", "help", "quit",
+	"edit", "fit", "doctor", "flags", "theme", "tab", "bench", "discover", "logs", "endpoint", "help", "quit",
 }
 
 func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.editor != nil {
 		return m.updateEditor(msg)
+	}
+	if m.flagPicker != nil {
+		return m.updateFlagPicker(msg)
 	}
 	if m.groupWait != "" {
 		return m.updateGroupConfirm(msg)

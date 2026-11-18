@@ -9,6 +9,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"wool/internal/config"
+	flagcat "wool/internal/flags"
 	"wool/internal/gguf"
 	"wool/internal/ui"
 )
@@ -204,7 +205,7 @@ func (m *Model) editorView() string {
 	if len(body) > bodyH {
 		body = body[:bodyH]
 	}
-	hint := "enter edit · a add flag · backspace reset · x remove · F fit · esc close"
+	hint := "enter edit · a add flag (tab flags) · backspace reset · x remove · F fit · esc close"
 	if e.dirty {
 		hint = "fit draft · ctrl+s save · esc discard"
 	}
@@ -232,7 +233,11 @@ func (m *Model) editorView() string {
 // visible without scrolling. Warnings stay advisory; the write still happens.
 func (e *editor) extraNotes() []string {
 	notes := []string{"extras are not in the VRAM estimate"}
-	for _, warning := range config.ExtraConflictWarnings(e.base.Extra) {
+	warnings := config.ExtraConflictWarnings(e.base.Extra)
+	if catalog, err := flagcat.Embedded(); err == nil {
+		warnings = flagcat.WarningMessages(flagcat.CheckExtras(e.base.Extra, catalog))
+	}
+	for _, warning := range warnings {
 		notes = append(notes, warning)
 	}
 	return notes
@@ -248,6 +253,9 @@ func fieldSourceKey(f editorField) string {
 // updateEditor handles keys while the editor overlay is open.
 func (m *Model) updateEditor(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	e := m.editor
+	if m.flagPicker != nil {
+		return m.updateFlagPicker(msg)
+	}
 	if e.fit != nil {
 		return m.updateFitOverlay(msg)
 	}
@@ -417,6 +425,9 @@ func (m *Model) updateExtraFlagInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		return m, nil
+	case "tab", "ctrl+f":
+		m.openFlagPicker(e.input.Value(), "editor")
+		return m, nil
 	}
 	var cmd tea.Cmd
 	e.input, cmd = e.input.Update(msg)
@@ -456,6 +467,13 @@ func (m *Model) addExtraFlag(raw string) error {
 	}
 	if conflict := config.ConflictingField(flag); conflict != "" {
 		notice += " · warning: overrides " + conflict
+	}
+	if catalog, err := flagcat.Embedded(); err == nil {
+		for _, warning := range flagcat.CheckExtras(map[string]string{flag: value}, catalog) {
+			if warning.Kind != "conflict" {
+				notice += " · warning: " + warning.Message
+			}
+		}
 	}
 	m.setToast(notice)
 	return nil

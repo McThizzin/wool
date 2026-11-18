@@ -1,0 +1,19 @@
+llama-server: simple HTTP server for llama.cpp models (b4000)
+
+usage: llama-server [options]
+
+options:
+  -h, --help                     show this help message and exit
+  -m, --model FNAME              model path
+  -c, --ctx-size N               size of the prompt context (default: 2048)
+      --gpu-layers N             number of layers to store in VRAM
+  -t, --threads N                number of threads to use during generation
+  -b, --batch-size N             logical batch size
+      --host HOST                host to listen on (default: 127.0.0.1)
+      --port N                   port to listen on (default: 8080)
+      --metrics                  enable Prometheus-compatible metrics
+      --temp FLOAT               temperature (default: 0.8)
+      --top-p FLOAT              top-p sampling (default: 0.9)
+      --top-k N                  top-k sampling (default: 40)
+      --seed N                   random number generator seed (default: -1)
+      --verbose                  verbose logging

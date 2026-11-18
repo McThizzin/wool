@@ -1,0 +1,51 @@
+llama-server: simple HTTP server for llama.cpp models (b6000)
+
+usage: llama-server [options]
+
+options:
+  -h, --help                     show this help message and exit
+  -v, --version                  show version and build info and exit
+  -m, --model FNAME              model path (default: models/7B/ggml-model-f16.gguf)
+      --model-alias ALIAS        deprecated: use --alias
+      --alias ALIAS              alias for the model (env: LLAMA_ARG_MODEL_ALIAS)
+  -c, --ctx-size N               size of the prompt context (default: 512, 0 = from model)
+      --gpu-layers N             number of layers to store in VRAM (default: -1)
+      --n-gpu-layers N           alias for --gpu-layers
+      --n-cpu-moe N              number of expert layers to keep in CPU
+  -t, --threads N                number of threads to use during generation (default: 8)
+      --threads-batch N          number of threads to use during prompt processing
+  -b, --batch-size N             logical batch size (default: 512)
+      --ubatch-size N            physical batch size (default: 256)
+      --parallel N               number of parallel decoding slots (default: 1)
+      --flash-attn MODE          flash attention mode
+      --cache-type-k TYPE        KV cache type for keys
+      --cache-type-v TYPE        KV cache type for values
+      --jinja                    use jinja templating system
+      --no-jinja                 disable jinja templating
+      --metrics                  enable Prometheus-compatible metrics
+      --host HOST                host to listen on (default: 127.0.0.1)
+      --port N                   port to listen on (default: 8080)
+      --api-key KEY              API key for endpoints
+      --timeout N                server read/write timeout in seconds (default: 600)
+      --temp FLOAT               temperature (default: 0.8)
+      --top-p FLOAT              top-p sampling (default: 0.9)
+      --top-k N                  top-k sampling (default: 40)
+      --min-p FLOAT              min-p sampling (default: 0.05)
+      --repeat-penalty FLOAT     repeat penalty (default: 1.0)
+      --presence-penalty FLOAT   presence penalty (default: 0.0)
+      --frequency-penalty FLOAT  frequency penalty (default: 0.0)
+      --typical-p FLOAT          typical-p sampling (default: 1.0)
+      --mirostat N               mirostat sampling mode (default: 0)
+      --seed N                   random number generator seed (default: -1)
+      --spec-type TYPE           speculative decoding method
+      --spec-draft-n-max N       maximum draft tokens for speculative decoding
+      --no-warmup                skip model warmup
+      --models-preset FNAME      router models preset file
+      --models-max N             maximum number of loaded router models
+      --models-autoload          load router models on demand
+      --no-models-autoload       disable router model autoload
+      --sleep-idle-seconds N     idle timeout before sleeping a model
+      --fit-target N             target memory for auto-fit
+      --models-memory-margin N   memory margin for router model loading
+      --log-file FNAME           write logs to a file
+      --verbose                  verbose logging

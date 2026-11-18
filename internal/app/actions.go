@@ -425,6 +425,7 @@ func (m *Model) showHelp() {
 		"  /edit                  open the option editor",
 		"  /fit                   open the option editor and fit overlay",
 		"  /doctor                run readiness checks",
+		"  /flags [TEXT]          fuzzy-search the llama-server flag catalog",
 		"  /theme [name]          switch theme",
 		"  /tab NAME              jump to dashboard, models, presets, router, inference, hardware, logs, bench, discovered",
 		"  /discover              scan model_dirs and show discovered models",
@@ -450,6 +451,8 @@ func (m *Model) runCommand(line string) (tea.Cmd, bool) {
 	switch cmd {
 	case "help", "?":
 		m.showHelp()
+	case "flags":
+		m.openFlagPicker(strings.Join(args, " "), "command")
 	case "quit", "q", "exit":
 		return tea.Quit, true
 	case "start":

@@ -1,0 +1,240 @@
+{
+  "source": {
+    "version": "b6000",
+    "commit": "a1b2c3d"
+  },
+  "overrides": {
+    "help": {
+      "value": "none",
+      "category": "general",
+      "description": "Show llama-server help and exit."
+    },
+    "version": {
+      "value": "none",
+      "category": "general",
+      "description": "Show llama-server version and build information and exit."
+    },
+    "model": {
+      "value": "path",
+      "category": "model",
+      "description": "Path to the GGUF model file."
+    },
+    "model-alias": {
+      "value": "string",
+      "category": "model",
+      "deprecated": true,
+      "replacement": "--alias",
+      "description": "Deprecated alias for --alias."
+    },
+    "alias": {
+      "value": "string",
+      "category": "model",
+      "description": "Friendly name reported for the loaded model."
+    },
+    "ctx-size": {
+      "value": "int",
+      "category": "context",
+      "description": "Prompt context size; 0 uses the model's native context."
+    },
+    "gpu-layers": {
+      "value": "int",
+      "category": "offload",
+      "description": "Number of model layers to offload to the GPU."
+    },
+    "n-gpu-layers": {
+      "value": "int",
+      "category": "offload",
+      "description": "Alias for --gpu-layers."
+    },
+    "n-cpu-moe": {
+      "value": "int",
+      "category": "offload",
+      "description": "Number of MoE expert layers to keep in system RAM."
+    },
+    "threads": {
+      "value": "int",
+      "category": "performance",
+      "description": "Threads used for token generation."
+    },
+    "threads-batch": {
+      "value": "int",
+      "category": "performance",
+      "description": "Threads used for prompt processing."
+    },
+    "batch-size": {
+      "value": "int",
+      "category": "performance",
+      "description": "Logical maximum batch size."
+    },
+    "ubatch-size": {
+      "value": "int",
+      "category": "performance",
+      "description": "Physical maximum batch size."
+    },
+    "parallel": {
+      "value": "int",
+      "category": "performance",
+      "description": "Number of parallel decoding slots."
+    },
+    "flash-attn": {
+      "value": "string",
+      "category": "cache",
+      "description": "Flash attention mode."
+    },
+    "cache-type-k": {
+      "value": "string",
+      "category": "cache",
+      "description": "KV cache type for keys."
+    },
+    "cache-type-v": {
+      "value": "string",
+      "category": "cache",
+      "description": "KV cache type for values."
+    },
+    "jinja": {
+      "value": "none",
+      "category": "templating",
+      "description": "Use the model's Jinja chat template."
+    },
+    "no-jinja": {
+      "value": "none",
+      "category": "templating",
+      "description": "Disable the model's Jinja chat template."
+    },
+    "metrics": {
+      "value": "none",
+      "category": "server",
+      "description": "Expose Prometheus-compatible metrics."
+    },
+    "host": {
+      "value": "string",
+      "category": "server",
+      "description": "Address to listen on."
+    },
+    "port": {
+      "value": "int",
+      "category": "server",
+      "description": "TCP port to listen on."
+    },
+    "api-key": {
+      "value": "string",
+      "category": "server",
+      "description": "API key required by HTTP endpoints."
+    },
+    "timeout": {
+      "value": "int",
+      "category": "server",
+      "description": "HTTP read and write timeout in seconds."
+    },
+    "temp": {
+      "value": "float",
+      "category": "sampling",
+      "description": "Sampling temperature."
+    },
+    "top-p": {
+      "value": "float",
+      "category": "sampling",
+      "description": "Nucleus sampling probability mass."
+    },
+    "top-k": {
+      "value": "int",
+      "category": "sampling",
+      "description": "Keep only the top K tokens when sampling."
+    },
+    "min-p": {
+      "value": "float",
+      "category": "sampling",
+      "description": "Minimum relative probability for a token."
+    },
+    "repeat-penalty": {
+      "value": "float",
+      "category": "sampling",
+      "description": "Penalty applied to repeated tokens."
+    },
+    "presence-penalty": {
+      "value": "float",
+      "category": "sampling",
+      "description": "Penalty applied once per token already present."
+    },
+    "frequency-penalty": {
+      "value": "float",
+      "category": "sampling",
+      "description": "Penalty scaled by token occurrence count."
+    },
+    "typical-p": {
+      "value": "float",
+      "category": "sampling",
+      "description": "Typical sampling probability mass."
+    },
+    "mirostat": {
+      "value": "int",
+      "category": "sampling",
+      "description": "Mirostat sampling mode: 0 off, 1 or 2 enabled."
+    },
+    "seed": {
+      "value": "int",
+      "category": "sampling",
+      "description": "Random number generator seed; -1 randomizes."
+    },
+    "spec-type": {
+      "value": "string",
+      "category": "sampling",
+      "description": "Speculative decoding method."
+    },
+    "spec-draft-n-max": {
+      "value": "int",
+      "category": "sampling",
+      "description": "Maximum number of draft tokens for speculative decoding."
+    },
+    "no-warmup": {
+      "value": "none",
+      "category": "model",
+      "description": "Skip the model warmup pass at startup."
+    },
+    "models-preset": {
+      "value": "path",
+      "category": "router",
+      "description": "INI file describing router models and their options."
+    },
+    "models-max": {
+      "value": "int",
+      "category": "router",
+      "description": "Maximum number of models the router keeps loaded."
+    },
+    "models-autoload": {
+      "value": "none",
+      "category": "router",
+      "description": "Allow the router to load models on demand."
+    },
+    "no-models-autoload": {
+      "value": "none",
+      "category": "router",
+      "description": "Disable router model autoloading."
+    },
+    "sleep-idle-seconds": {
+      "value": "int",
+      "category": "router",
+      "description": "Seconds of inactivity before a router model sleeps."
+    },
+    "fit-target": {
+      "value": "int",
+      "category": "router",
+      "description": "Memory target in MiB used by router auto-fit."
+    },
+    "models-memory-margin": {
+      "value": "int",
+      "category": "router",
+      "description": "Memory margin in MiB reserved by the router."
+    },
+    "log-file": {
+      "value": "path",
+      "category": "logging",
+      "description": "Write server logs to this file."
+    },
+    "verbose": {
+      "value": "none",
+      "category": "logging",
+      "description": "Enable verbose logging."
+    }
+  }
+}

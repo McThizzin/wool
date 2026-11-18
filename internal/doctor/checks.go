@@ -12,6 +12,7 @@ import (
 
 	"wool/internal/config"
 	"wool/internal/daemon"
+	flagcat "wool/internal/flags"
 	"wool/internal/gguf"
 	"wool/internal/measure"
 	"wool/internal/sysinfo"
@@ -29,8 +30,8 @@ func Run(cfg *config.Config, cfgPath string) Report {
 
 	bin := config.ExpandPath(cfg.App.LlamaServer)
 	serverVersion := ""
-	path, err := exec.LookPath(bin)
-	if err != nil {
+	path, lookPathErr := exec.LookPath(bin)
+	if lookPathErr != nil {
 		add(LevelFail, "llama-server", "%s not found in PATH", bin)
 	} else {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -45,6 +46,41 @@ func Run(cfg *config.Config, cfgPath string) Report {
 			add(LevelOK, "llama-server", "%s", path)
 		default:
 			add(LevelOK, "llama-server", "%s (%s)", path, version)
+		}
+	}
+
+	rep.InstalledLlamaServer = serverVersion
+	if catalog, catalogErr := flagcat.Embedded(); catalogErr != nil {
+		add(LevelWarn, "flag catalog", "catalog unavailable: %v", catalogErr)
+	} else {
+		rep.FlagCatalog = catalog.Source
+		add(LevelOK, "flag catalog", "%s (%s)", catalog.Source.Version, catalog.Source.Commit)
+		warnings := flagcat.ConfigWarnings(cfg, catalog)
+		if len(warnings) > 0 {
+			messages := flagcat.WarningMessages(warnings)
+			add(LevelWarn, "extra flags", "%d warning(s): %s", len(messages), strings.Join(messages, "; "))
+		}
+		if lookPathErr == nil {
+			help, helpErr := flagcat.ReadHelp(path)
+			if helpErr == nil {
+				version := flagcat.DetectVersion(help)
+				if version == "" {
+					version = flagcat.DetectVersion(serverVersion)
+				}
+				if rep.InstalledLlamaServer == "" {
+					rep.InstalledLlamaServer = version
+				}
+				installed, perr := flagcat.ParseHelp(help, flagcat.CatalogSource{Version: version})
+				if perr == nil {
+					result := flagcat.Compare(installed, catalog)
+					if result.OK {
+						add(LevelOK, "flag catalog check", "installed help matches the embedded catalog")
+					} else {
+						add(LevelWarn, "flag catalog check", "%d new, %d missing, %d changed",
+							len(result.New), len(result.Missing), len(result.Changed))
+					}
+				}
+			}
 		}
 	}
 

@@ -480,7 +480,7 @@ boundary.
 | M5.2 | [Disk and orphan view](features/m5-02-disk-and-orphan-view.md) | M5 | P2 | S | M5.1 | shipped |
 | M5.3 | [Config validation with line numbers](features/m5-03-config-validation-with-line-numbers.md) | M5 | P2 | S/M | — | shipped |
 | M5.4 | [Extra-flag editing and provenance](features/m5-04-extra-flag-editing-and-provenance.md) | M5 | P1 | S/M | M1.1 | shipped |
-| M5.5 | [Flag catalog and fuzzy reference](features/m5-05-flag-catalog-and-fuzzy-reference.md) | M5 | P2 | M | M5.3, M5.4 | planned |
+| M5.5 | [Flag catalog and fuzzy reference](features/m5-05-flag-catalog-and-fuzzy-reference.md) | M5 | P2 | M | M5.3, M5.4 | shipped |
 | M5.6 | [Export as a service](features/m5-06-export-a-preset-as-a-service.md) | M5 | P2 | S/M | M5.4 | planned |
 | M5.7 | [Preset cloning and templates](features/m5-07-preset-cloning-and-templates.md) | M5 | P3 | M | M1.1, M5.4 | planned |
 | M5.8 | [Machine-readable surface](features/m5-08-machine-readable-surface.md) | M5 | P2 | M/L | M1.3, M3.1, M5.5 | planned |

@@ -51,6 +51,7 @@ Usage:
   wool config check [--strict] [--json]  validate the config (strict rejects typos)
   wool config explain TARGET [--json]  show each value and where it came from
   wool config diff TARGET [--against defaults|model] [--json]
+  wool flags [--json] [--search TEXT] [--check] [--strict]
   wool version
 
 TARGET is a preset name or a model name. run options:
@@ -128,6 +129,8 @@ func run(args []string) int {
 		return cmdBench(cfgPath, rest)
 	case "config":
 		return cmdConfig(cfgPath, rest)
+	case "flags":
+		return cmdFlags(cfgPath, rest)
 	case "list":
 		return cmdList(cfgPath, rest)
 	case "models":

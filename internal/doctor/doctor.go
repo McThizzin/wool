@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"wool/internal/flags"
 	"wool/internal/gguf"
 	"wool/internal/measure"
 	"wool/internal/sysinfo"
@@ -72,13 +73,15 @@ type ModelReport struct {
 
 // Report is the full doctor result.
 type Report struct {
-	ConfigPath string        `json:"config_path"`
-	Checks     []Check       `json:"checks"`
-	Models     []ModelReport `json:"models"`
-	GPUs       []sysinfo.GPU `json:"gpus"`
-	Budget     gguf.Budget   `json:"budget"`
-	MemTotal   uint64        `json:"mem_total_bytes"`
-	MemAvail   uint64        `json:"mem_available_bytes"`
+	ConfigPath           string              `json:"config_path"`
+	Checks               []Check             `json:"checks"`
+	Models               []ModelReport       `json:"models"`
+	GPUs                 []sysinfo.GPU       `json:"gpus"`
+	Budget               gguf.Budget         `json:"budget"`
+	MemTotal             uint64              `json:"mem_total_bytes"`
+	MemAvail             uint64              `json:"mem_available_bytes"`
+	FlagCatalog          flags.CatalogSource `json:"flag_catalog"`
+	InstalledLlamaServer string              `json:"installed_llama_server,omitempty"`
 }
 
 // Failures returns checks that should make the command exit non-zero.
@@ -107,6 +110,12 @@ func (r Report) Warnings() []Check {
 func (r Report) Print() string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "config: %s\n", r.ConfigPath)
+	if r.FlagCatalog.Version != "" {
+		fmt.Fprintf(&b, "flag catalog: %s (%s)\n", r.FlagCatalog.Version, r.FlagCatalog.Commit)
+	}
+	if r.InstalledLlamaServer != "" {
+		fmt.Fprintf(&b, "llama-server: %s\n", r.InstalledLlamaServer)
+	}
 	for _, c := range r.Checks {
 		fmt.Fprintf(&b, "  [%s] %-14s %s\n", c.Level, c.Name, c.Detail)
 	}

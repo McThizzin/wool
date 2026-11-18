@@ -8,6 +8,7 @@ import (
 	"text/tabwriter"
 
 	"wool/internal/config"
+	"wool/internal/flags"
 )
 
 func cmdConfig(cfgPath string, args []string) int {
@@ -62,17 +63,19 @@ type configCheckError struct {
 }
 
 type configCheckOutput struct {
-	OK     bool               `json:"ok"`
-	Strict bool               `json:"strict"`
-	Errors []configCheckError `json:"errors"`
+	OK       bool               `json:"ok"`
+	Strict   bool               `json:"strict"`
+	Errors   []configCheckError `json:"errors"`
+	Warnings []flags.Warning    `json:"warnings,omitempty"`
 }
 
 // cmdConfigCheck validates the config without starting servers. --strict also
-// rejects keys that are not in the schema, while still allowing map fields.
+// rejects unknown keys and promotes unknown or deprecated extra flags to
+// errors, while still allowing map fields.
 func cmdConfigCheck(cfgPath string, args []string) int {
 	fs := flag.NewFlagSet("config check", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
-	strict := fs.Bool("strict", false, "reject unknown keys")
+	strict := fs.Bool("strict", false, "reject unknown keys and flags")
 	asJSON := fs.Bool("json", false, "print JSON")
 	if err := fs.Parse(args); err != nil {
 		return 2
@@ -82,16 +85,37 @@ func cmdConfigCheck(cfgPath string, args []string) int {
 		return 2
 	}
 
-	_, err := config.LoadWithOptions(cfgPath, config.ParseOptions{Strict: *strict})
+	cfg, err := config.LoadWithOptions(cfgPath, config.ParseOptions{Strict: *strict})
 	structured := config.AsErrors(err)
-	out := configCheckOutput{OK: err == nil, Strict: *strict, Errors: []configCheckError{}}
+	out := configCheckOutput{Strict: *strict, Errors: []configCheckError{}, Warnings: []flags.Warning{}}
 	for _, e := range structured {
 		out.Errors = append(out.Errors, configCheckError{
 			File: e.File, Line: e.Line, Column: e.Column, Key: e.Key, Message: e.Message,
 		})
 	}
-	if err != nil && len(structured) == 0 {
-		out.Errors = append(out.Errors, configCheckError{File: cfgPath, Message: err.Error()})
+
+	catalog, catalogErr := flags.Embedded()
+	var flagErrors []configCheckError
+	var genericMessage string
+	if err == nil && catalogErr == nil {
+		out.Warnings = flags.ConfigWarnings(cfg, catalog)
+		if *strict {
+			if strictErr := flags.StrictError(out.Warnings); strictErr != nil {
+				for _, message := range strings.Split(strictErr.Error(), "\n") {
+					flagErrors = append(flagErrors, configCheckError{File: cfgPath, Message: message})
+				}
+				err = strictErr
+			}
+		}
+	}
+	if err != nil && len(structured) == 0 && len(flagErrors) == 0 {
+		genericMessage = err.Error()
+		out.Errors = append(out.Errors, configCheckError{File: cfgPath, Message: genericMessage})
+	}
+	out.Errors = append(out.Errors, flagErrors...)
+	out.OK = err == nil
+	if len(out.Warnings) == 0 {
+		out.Warnings = nil
 	}
 
 	if *asJSON {
@@ -105,10 +129,17 @@ func cmdConfigCheck(cfgPath string, args []string) int {
 		for _, e := range structured {
 			fmt.Fprintf(os.Stderr, "wool: %s\n", e)
 		}
-		if len(structured) == 0 {
-			fmt.Fprintf(os.Stderr, "wool: config %s: %v\n", cfgPath, err)
+		for _, e := range flagErrors {
+			fmt.Fprintf(os.Stderr, "wool: %s: %s\n", cfgPath, e.Message)
 		}
+		if genericMessage != "" {
+			fmt.Fprintf(os.Stderr, "wool: config %s: %s\n", cfgPath, genericMessage)
+		}
+		printConfigWarnings(flags.WarningMessages(out.Warnings))
 		return 1
+	}
+	for _, warning := range flags.WarningMessages(out.Warnings) {
+		fmt.Fprintln(os.Stderr, "wool: warning: "+warning)
 	}
 	fmt.Println("config OK")
 	return 0
@@ -172,7 +203,7 @@ func cmdConfigExplain(cfgPath string, args []string) int {
 		Target:   target,
 		Kind:     kind,
 		Model:    r.ModelID,
-		Warnings: config.ExtraConflictWarnings(r.Extra),
+		Warnings: resolvedExtraWarnings(r.Extra),
 	}
 	for _, field := range config.FieldNames(r) {
 		p := sources[field]
@@ -195,6 +226,14 @@ func cmdConfigExplain(cfgPath string, args []string) int {
 	w.Flush()
 	printConfigWarnings(out.Warnings)
 	return 0
+}
+
+func resolvedExtraWarnings(extra map[string]string) []string {
+	catalog, err := flags.Embedded()
+	if err != nil {
+		return config.ExtraConflictWarnings(extra)
+	}
+	return flags.WarningMessages(flags.CheckExtras(extra, catalog))
 }
 
 func printConfigWarnings(warnings []string) {
@@ -287,7 +326,7 @@ func cmdConfigDiff(cfgPath string, args []string) int {
 		Model:    r.ModelID,
 		Against:  res.Against,
 		Fields:   res.Fields,
-		Warnings: config.ExtraConflictWarnings(r.Extra),
+		Warnings: resolvedExtraWarnings(r.Extra),
 	}
 	if asJSON {
 		return writeJSON(out)

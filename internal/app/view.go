@@ -14,6 +14,9 @@ func (m *Model) View() string {
 	if m.width == 0 || m.height == 0 {
 		return "loading..."
 	}
+	if m.flagPicker != nil {
+		return m.flagPickerView()
+	}
 	if m.editor != nil {
 		return m.editorView()
 	}

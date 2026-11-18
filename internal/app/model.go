@@ -172,7 +172,8 @@ type Model struct {
 	endpointSel    int
 	endpointNotice string
 
-	editor *editor
+	flagPicker *flagPicker
+	editor     *editor
 }
 
 type fitInfo struct {

@@ -1,0 +1,549 @@
+{
+  "source": {
+    "version": "b6000",
+    "commit": "a1b2c3d"
+  },
+  "flags": [
+    {
+      "name": "alias",
+      "aliases": [],
+      "value": "string",
+      "description": "Friendly name reported for the loaded model.",
+      "env": "LLAMA_ARG_MODEL_ALIAS",
+      "category": "model",
+      "source": {
+        "version": "b6000",
+        "commit": "a1b2c3d"
+      }
+    },
+    {
+      "name": "api-key",
+      "aliases": [],
+      "value": "string",
+      "description": "API key required by HTTP endpoints.",
+      "category": "server",
+      "source": {
+        "version": "b6000",
+        "commit": "a1b2c3d"
+      }
+    },
+    {
+      "name": "batch-size",
+      "aliases": [
+        "b"
+      ],
+      "value": "int",
+      "description": "Logical maximum batch size.",
+      "default": "512",
+      "category": "performance",
+      "source": {
+        "version": "b6000",
+        "commit": "a1b2c3d"
+      }
+    },
+    {
+      "name": "cache-type-k",
+      "aliases": [],
+      "value": "string",
+      "description": "KV cache type for keys.",
+      "category": "cache",
+      "source": {
+        "version": "b6000",
+        "commit": "a1b2c3d"
+      }
+    },
+    {
+      "name": "cache-type-v",
+      "aliases": [],
+      "value": "string",
+      "description": "KV cache type for values.",
+      "category": "cache",
+      "source": {
+        "version": "b6000",
+        "commit": "a1b2c3d"
+      }
+    },
+    {
+      "name": "ctx-size",
+      "aliases": [
+        "c"
+      ],
+      "value": "int",
+      "description": "Prompt context size; 0 uses the model's native context.",
+      "default": "512, 0 = from model",
+      "category": "context",
+      "source": {
+        "version": "b6000",
+        "commit": "a1b2c3d"
+      }
+    },
+    {
+      "name": "fit-target",
+      "aliases": [],
+      "value": "int",
+      "description": "Memory target in MiB used by router auto-fit.",
+      "category": "router",
+      "source": {
+        "version": "b6000",
+        "commit": "a1b2c3d"
+      }
+    },
+    {
+      "name": "flash-attn",
+      "aliases": [],
+      "value": "string",
+      "description": "Flash attention mode.",
+      "category": "cache",
+      "source": {
+        "version": "b6000",
+        "commit": "a1b2c3d"
+      }
+    },
+    {
+      "name": "frequency-penalty",
+      "aliases": [],
+      "value": "float",
+      "description": "Penalty scaled by token occurrence count.",
+      "default": "0.0",
+      "category": "sampling",
+      "source": {
+        "version": "b6000",
+        "commit": "a1b2c3d"
+      }
+    },
+    {
+      "name": "gpu-layers",
+      "aliases": [],
+      "value": "int",
+      "description": "Number of model layers to offload to the GPU.",
+      "default": "-1",
+      "category": "offload",
+      "source": {
+        "version": "b6000",
+        "commit": "a1b2c3d"
+      }
+    },
+    {
+      "name": "help",
+      "aliases": [
+        "h"
+      ],
+      "value": "none",
+      "description": "Show llama-server help and exit.",
+      "category": "general",
+      "source": {
+        "version": "b6000",
+        "commit": "a1b2c3d"
+      }
+    },
+    {
+      "name": "host",
+      "aliases": [],
+      "value": "string",
+      "description": "Address to listen on.",
+      "default": "127.0.0.1",
+      "category": "server",
+      "source": {
+        "version": "b6000",
+        "commit": "a1b2c3d"
+      }
+    },
+    {
+      "name": "jinja",
+      "aliases": [],
+      "value": "none",
+      "description": "Use the model's Jinja chat template.",
+      "category": "templating",
+      "source": {
+        "version": "b6000",
+        "commit": "a1b2c3d"
+      }
+    },
+    {
+      "name": "log-file",
+      "aliases": [],
+      "value": "path",
+      "description": "Write server logs to this file.",
+      "category": "logging",
+      "source": {
+        "version": "b6000",
+        "commit": "a1b2c3d"
+      }
+    },
+    {
+      "name": "metrics",
+      "aliases": [],
+      "value": "none",
+      "description": "Expose Prometheus-compatible metrics.",
+      "category": "server",
+      "source": {
+        "version": "b6000",
+        "commit": "a1b2c3d"
+      }
+    },
+    {
+      "name": "min-p",
+      "aliases": [],
+      "value": "float",
+      "description": "Minimum relative probability for a token.",
+      "default": "0.05",
+      "category": "sampling",
+      "source": {
+        "version": "b6000",
+        "commit": "a1b2c3d"
+      }
+    },
+    {
+      "name": "mirostat",
+      "aliases": [],
+      "value": "int",
+      "description": "Mirostat sampling mode: 0 off, 1 or 2 enabled.",
+      "default": "0",
+      "category": "sampling",
+      "source": {
+        "version": "b6000",
+        "commit": "a1b2c3d"
+      }
+    },
+    {
+      "name": "model",
+      "aliases": [
+        "m"
+      ],
+      "value": "path",
+      "description": "Path to the GGUF model file.",
+      "default": "models/7B/ggml-model-f16.gguf",
+      "category": "model",
+      "source": {
+        "version": "b6000",
+        "commit": "a1b2c3d"
+      }
+    },
+    {
+      "name": "model-alias",
+      "aliases": [],
+      "value": "string",
+      "description": "Deprecated alias for --alias.",
+      "category": "model",
+      "deprecated": true,
+      "replacement": "--alias",
+      "source": {
+        "version": "b6000",
+        "commit": "a1b2c3d"
+      }
+    },
+    {
+      "name": "models-autoload",
+      "aliases": [],
+      "value": "none",
+      "description": "Allow the router to load models on demand.",
+      "category": "router",
+      "source": {
+        "version": "b6000",
+        "commit": "a1b2c3d"
+      }
+    },
+    {
+      "name": "models-max",
+      "aliases": [],
+      "value": "int",
+      "description": "Maximum number of models the router keeps loaded.",
+      "category": "router",
+      "source": {
+        "version": "b6000",
+        "commit": "a1b2c3d"
+      }
+    },
+    {
+      "name": "models-memory-margin",
+      "aliases": [],
+      "value": "int",
+      "description": "Memory margin in MiB reserved by the router.",
+      "category": "router",
+      "source": {
+        "version": "b6000",
+        "commit": "a1b2c3d"
+      }
+    },
+    {
+      "name": "models-preset",
+      "aliases": [],
+      "value": "path",
+      "description": "INI file describing router models and their options.",
+      "category": "router",
+      "source": {
+        "version": "b6000",
+        "commit": "a1b2c3d"
+      }
+    },
+    {
+      "name": "n-cpu-moe",
+      "aliases": [],
+      "value": "int",
+      "description": "Number of MoE expert layers to keep in system RAM.",
+      "category": "offload",
+      "source": {
+        "version": "b6000",
+        "commit": "a1b2c3d"
+      }
+    },
+    {
+      "name": "n-gpu-layers",
+      "aliases": [],
+      "value": "int",
+      "description": "Alias for --gpu-layers.",
+      "category": "offload",
+      "source": {
+        "version": "b6000",
+        "commit": "a1b2c3d"
+      }
+    },
+    {
+      "name": "no-jinja",
+      "aliases": [],
+      "value": "none",
+      "description": "Disable the model's Jinja chat template.",
+      "category": "templating",
+      "source": {
+        "version": "b6000",
+        "commit": "a1b2c3d"
+      }
+    },
+    {
+      "name": "no-models-autoload",
+      "aliases": [],
+      "value": "none",
+      "description": "Disable router model autoloading.",
+      "category": "router",
+      "source": {
+        "version": "b6000",
+        "commit": "a1b2c3d"
+      }
+    },
+    {
+      "name": "no-warmup",
+      "aliases": [],
+      "value": "none",
+      "description": "Skip the model warmup pass at startup.",
+      "category": "model",
+      "source": {
+        "version": "b6000",
+        "commit": "a1b2c3d"
+      }
+    },
+    {
+      "name": "parallel",
+      "aliases": [],
+      "value": "int",
+      "description": "Number of parallel decoding slots.",
+      "default": "1",
+      "category": "performance",
+      "source": {
+        "version": "b6000",
+        "commit": "a1b2c3d"
+      }
+    },
+    {
+      "name": "port",
+      "aliases": [],
+      "value": "int",
+      "description": "TCP port to listen on.",
+      "default": "8080",
+      "category": "server",
+      "source": {
+        "version": "b6000",
+        "commit": "a1b2c3d"
+      }
+    },
+    {
+      "name": "presence-penalty",
+      "aliases": [],
+      "value": "float",
+      "description": "Penalty applied once per token already present.",
+      "default": "0.0",
+      "category": "sampling",
+      "source": {
+        "version": "b6000",
+        "commit": "a1b2c3d"
+      }
+    },
+    {
+      "name": "repeat-penalty",
+      "aliases": [],
+      "value": "float",
+      "description": "Penalty applied to repeated tokens.",
+      "default": "1.0",
+      "category": "sampling",
+      "source": {
+        "version": "b6000",
+        "commit": "a1b2c3d"
+      }
+    },
+    {
+      "name": "seed",
+      "aliases": [],
+      "value": "int",
+      "description": "Random number generator seed; -1 randomizes.",
+      "default": "-1",
+      "category": "sampling",
+      "source": {
+        "version": "b6000",
+        "commit": "a1b2c3d"
+      }
+    },
+    {
+      "name": "sleep-idle-seconds",
+      "aliases": [],
+      "value": "int",
+      "description": "Seconds of inactivity before a router model sleeps.",
+      "category": "router",
+      "source": {
+        "version": "b6000",
+        "commit": "a1b2c3d"
+      }
+    },
+    {
+      "name": "spec-draft-n-max",
+      "aliases": [],
+      "value": "int",
+      "description": "Maximum number of draft tokens for speculative decoding.",
+      "category": "sampling",
+      "source": {
+        "version": "b6000",
+        "commit": "a1b2c3d"
+      }
+    },
+    {
+      "name": "spec-type",
+      "aliases": [],
+      "value": "string",
+      "description": "Speculative decoding method.",
+      "category": "sampling",
+      "source": {
+        "version": "b6000",
+        "commit": "a1b2c3d"
+      }
+    },
+    {
+      "name": "temp",
+      "aliases": [],
+      "value": "float",
+      "description": "Sampling temperature.",
+      "default": "0.8",
+      "category": "sampling",
+      "source": {
+        "version": "b6000",
+        "commit": "a1b2c3d"
+      }
+    },
+    {
+      "name": "threads",
+      "aliases": [
+        "t"
+      ],
+      "value": "int",
+      "description": "Threads used for token generation.",
+      "default": "8",
+      "category": "performance",
+      "source": {
+        "version": "b6000",
+        "commit": "a1b2c3d"
+      }
+    },
+    {
+      "name": "threads-batch",
+      "aliases": [],
+      "value": "int",
+      "description": "Threads used for prompt processing.",
+      "category": "performance",
+      "source": {
+        "version": "b6000",
+        "commit": "a1b2c3d"
+      }
+    },
+    {
+      "name": "timeout",
+      "aliases": [],
+      "value": "int",
+      "description": "HTTP read and write timeout in seconds.",
+      "default": "600",
+      "category": "server",
+      "source": {
+        "version": "b6000",
+        "commit": "a1b2c3d"
+      }
+    },
+    {
+      "name": "top-k",
+      "aliases": [],
+      "value": "int",
+      "description": "Keep only the top K tokens when sampling.",
+      "default": "40",
+      "category": "sampling",
+      "source": {
+        "version": "b6000",
+        "commit": "a1b2c3d"
+      }
+    },
+    {
+      "name": "top-p",
+      "aliases": [],
+      "value": "float",
+      "description": "Nucleus sampling probability mass.",
+      "default": "0.9",
+      "category": "sampling",
+      "source": {
+        "version": "b6000",
+        "commit": "a1b2c3d"
+      }
+    },
+    {
+      "name": "typical-p",
+      "aliases": [],
+      "value": "float",
+      "description": "Typical sampling probability mass.",
+      "default": "1.0",
+      "category": "sampling",
+      "source": {
+        "version": "b6000",
+        "commit": "a1b2c3d"
+      }
+    },
+    {
+      "name": "ubatch-size",
+      "aliases": [],
+      "value": "int",
+      "description": "Physical maximum batch size.",
+      "default": "256",
+      "category": "performance",
+      "source": {
+        "version": "b6000",
+        "commit": "a1b2c3d"
+      }
+    },
+    {
+      "name": "verbose",
+      "aliases": [],
+      "value": "none",
+      "description": "Enable verbose logging.",
+      "category": "logging",
+      "source": {
+        "version": "b6000",
+        "commit": "a1b2c3d"
+      }
+    },
+    {
+      "name": "version",
+      "aliases": [
+        "v"
+      ],
+      "value": "none",
+      "description": "Show llama-server version and build information and exit.",
+      "category": "general",
+      "source": {
+        "version": "b6000",
+        "commit": "a1b2c3d"
+      }
+    }
+  ]
+}
