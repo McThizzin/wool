@@ -5,7 +5,7 @@ Part of [M5](../roadmap.md#milestone-m5). See the
 
 **Priority** P1 · **Size** S/M · **Depends** M1.1
 
-**Status** planned
+**Status** shipped
 
 **Problem.** `[models.<id>.extra]` and `[presets.<name>.extra]` already turn
 keys into `llama-server` flags, but the editor can only change its fixed field
@@ -39,20 +39,28 @@ which layer supplied an extra or whether it overrides a first-class option.
 
 **Acceptance.**
 
-- [ ] A flag that has no dedicated editor field can be added to a model and a
+- [x] A flag that has no dedicated editor field can be added to a model and a
       preset from the TUI.
-- [ ] The write goes to the correct `[*.extra]` table, preserves comments and
+- [x] The write goes to the correct `[*.extra]` table, preserves comments and
       ordering, and produces the expected standalone argv and router INI.
-- [ ] Editing, removing and resetting an extra works; reset removes only the
+- [x] Editing, removing and resetting an extra works; reset removes only the
       current layer's key and falls back to an inherited value.
-- [ ] `config explain` and `config diff` include extras with value, source and
+- [x] `config explain` and `config diff` include extras with value, source and
       exact layer.
-- [ ] Bare flags and flags with values round-trip correctly.
-- [ ] Duplicating a first-class option warns but remains an explicit user
+- [x] Bare flags and flags with values round-trip correctly.
+- [x] Duplicating a first-class option warns but remains an explicit user
       choice.
-- [ ] The editor makes it clear that arbitrary extras are outside the estimate.
-- [ ] Tests cover the config writer, argv/INI generation, the editor flow and
+- [x] The editor makes it clear that arbitrary extras are outside the estimate.
+- [x] Tests cover the config writer, argv/INI generation, the editor flow and
       provenance/diff.
+
+**Implementation notes.** Resolved extras use normalized flag names and appear
+as `extra.<flag>` fields in provenance, `config explain`, `config diff` and the
+editor. The editor's add prompt accepts `name` for a bare flag or
+`name=value` for a value; `backspace`, `delete` and `x` remove the current
+layer's key. Conflicts warn in the TUI and in command output but never block the
+write. Generated INI records a bare extra as `flag = true` and puts inherited
+defaults extras only in `[*]`.
 
 **Risk.** Some extras change VRAM use in ways the estimator does not model.
 Warn about that and keep the estimate advisory rather than blocking a launch.

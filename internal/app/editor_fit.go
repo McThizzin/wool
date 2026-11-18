@@ -95,6 +95,14 @@ func (m *Model) refreshPreview() {
 	case "cache_type_v":
 		draft.CacheTypeV = raw
 	default:
+		e.preview = m.previewFor(e, e.base)
+		if f.extra {
+			note := "extras are not modeled by the VRAM estimate"
+			if e.preview.Note != "" {
+				note = e.preview.Note + "; " + note
+			}
+			e.preview.Note = note
+		}
 		return
 	}
 	e.preview = m.previewFor(e, draft)
@@ -427,6 +435,9 @@ func (m *Model) editorFitView() string {
 			}
 			for _, note := range res.Notes {
 				body = append(body, st.Warn.Render(ui.Fit("note: "+note, w-4)))
+			}
+			for _, note := range e.extraNotes() {
+				body = append(body, st.Warn.Render(ui.Fit(note, w-4)))
 			}
 		} else {
 			body = append(body, st.Warn.Render("no recommendation"))

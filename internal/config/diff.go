@@ -69,10 +69,7 @@ func (c *Config) Diff(modelID, presetName, against string) (DiffResult, error) {
 	var baseSources map[string]Provenance
 	if against == SourceDefaults {
 		base = c.ResolveDefaults()
-		baseSources = make(map[string]Provenance, len(optionFields))
-		for _, field := range optionFields {
-			baseSources[field] = c.provenance("", "", field)
-		}
+		baseSources = c.sourcesFor(base, "", "")
 	} else {
 		base, baseSources, err = c.ResolveDetailed(target.ModelID, "")
 		if err != nil {
@@ -80,8 +77,22 @@ func (c *Config) Diff(modelID, presetName, against string) (DiffResult, error) {
 		}
 	}
 
+	fields := FieldNames(target)
+	for _, field := range FieldNames(base) {
+		found := false
+		for _, existing := range fields {
+			if existing == field {
+				found = true
+				break
+			}
+		}
+		if !found {
+			fields = append(fields, field)
+		}
+	}
+
 	result := DiffResult{Against: against, Fields: []DiffField{}}
-	for _, field := range optionFields {
+	for _, field := range fields {
 		targetValue := FieldValue(target, field)
 		baseValue := FieldValue(base, field)
 		if reflect.DeepEqual(targetValue, baseValue) {
@@ -97,8 +108,16 @@ func (c *Config) Diff(modelID, presetName, against string) (DiffResult, error) {
 	return result, nil
 }
 
-// FieldValue returns the resolved value of a canonical launch option.
+// FieldValue returns the resolved value of a canonical launch option or an
+// extra flag named extra.<flag>.
 func FieldValue(r Resolved, field string) any {
+	if flag, ok := ExtraFlagFromField(field); ok {
+		value, ok := r.Extra[flag]
+		if !ok {
+			return nil
+		}
+		return value
+	}
 	switch field {
 	case "ctx":
 		return r.Ctx

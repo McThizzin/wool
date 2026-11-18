@@ -17,7 +17,8 @@
 
 - **Detached servers by default.** `run`, `start`, and router launches use `setsid`; quitting the TUI never stops inference. State is stored as JSON and processes are validated by PID start tick before they are signalled.
 - **One TOML source of truth.** Models, presets, launch options, sampling, router settings, and themes all live in `config.toml`. There is no legacy `presets.conf` importer.
-- **Effective-config diff.** `wool config diff TARGET` and the TUI `D` overlay show only the launch options that differ from the model or defaults layer, with the source of each side.
+- **Editable extra flags.** Add arbitrary `llama-server` flags from the TUI, see which layer supplied each one, reset overrides, and watch for conflicts with fixed options. Extras remain outside the VRAM estimate.
+- **Effective-config diff.** `wool config diff TARGET` and the TUI `D` overlay show only the launch options and extra flags that differ from the model or defaults layer, with the source of each side.
 - **Full router control.** Start/stop the router, list models, load/unload, reload presets, and read per-model stats and slots.
 - **Warm sets.** Named `[groups.*]` lists load together with one command or one key, continue after a failure, and report exactly which models failed. Groups larger than `models_max` warn before starting.
 - **Eviction view.** The Router tab shows resident models against `models_max`, the configured memory margin, wool's estimate for the resident set, and a best-effort LRU prediction of what loading the selected model would evict under the count limit or the memory margin. Missing estimates say `unknown`, and the victim is always labeled as a prediction.
@@ -415,9 +416,9 @@ Unset keys inherit; explicit zero/false values are preserved. `threads = 0` reso
 
 `wool config check` validates the config without starting anything. Malformed TOML is reported as `path:line:col: message`, so the position can be opened directly in an editor. `wool config check --strict` also rejects keys that are not in the schema, naming each unknown key with its line and column; map fields such as `[models.<id>.extra]`, `[presets.<name>.extra]` and `[themes.<name>.colors]` still accept arbitrary keys. `--json` emits `ok`, `strict` and an `errors` array for scripts. This is separate from `wool run --strict`, which still means "fail on smoke-test failure". When the TUI starts with an unreadable config, it shows the same message in a config error overlay instead of exiting silently; dismissing the overlay quits.
 
-`wool config explain TARGET` shows every effective launch option with the layer that supplied it (`built-in`, `defaults`, `model` or `preset`). Add `--json` for `value`, `source` and `layer` fields. In the editor, the same source is shown next to each row; `backspace` or `delete` removes that override and falls back to the next layer.
+`wool config explain TARGET` shows every effective launch option and extra flag with the layer that supplied it (`built-in`, `defaults`, `model` or `preset`). Extras appear as `extra.<flag>`; an empty value is shown as `"" (bare)`. Add `--json` for `value`, `source`, `layer` and conflict `warnings`. In the editor, extras are listed after the fixed fields, sorted by flag name and marked with their source. Press `a` to add one with `name=value` (or just `name` for a bare flag), `enter` to edit its value, and `backspace`, `delete` or `x` to remove the current layer's key and fall back to a lower layer. Extras outside the fixed option list are not modelled by the VRAM estimate, and the editor says so; a flag that duplicates a first-class option warns but is still saved because extras are appended last.
 
-`wool config diff TARGET [--against defaults|model]` shows only the options whose resolved value differs from the comparison layer. A preset defaults to its model, so the result is what the preset actually changes; a model defaults to the defaults layer. `--json` includes the value, source and layer for both `target` and `against`, and `fields` is empty when nothing differs. The TUI `D` key opens the same view for the selected model or preset.
+`wool config diff TARGET [--against defaults|model]` shows only the options and extras whose resolved value differs from the comparison layer. A preset defaults to its model, so the result is what the preset actually changes; a model defaults to the defaults layer. `--json` includes the value, source and layer for both `target` and `against`, plus any conflict `warnings`; `fields` is empty when nothing differs. The TUI `D` key opens the same view for the selected model or preset.
 
 The dashboard and `wool doctor` decompose the estimate into weights, KV cache and overhead, then compare it with the budget for a new server: GPU total minus `router.memory_margin_mib` minus VRAM used by other processes. A running standalone server's own allocation is excluded so a restart is not charged twice. `wool doctor --json` includes the same `estimate`, `budget`, `headroom_bytes` and `limiting_term` fields. While editing, the preview updates as you type; `enter` commits and `esc` discards.
 
@@ -456,7 +457,7 @@ Supported color keys: `border`, `accent`, `text`, `dim`, `badge_fg`, `red`, `yel
 | `B` | focus the Bench history tab |
 | `space` | mark a benchmark run for comparison |
 | `f` | toggle log follow, or cycle the Bench target filter |
-| `e` | edit the selected preset or model; `backspace`/`delete` resets a row |
+| `e` | edit the selected preset or model; `a` adds an extra flag, `backspace`/`delete`/`x` resets or removes a row |
 | `F` | recommend settings that fit VRAM in the editor |
 | `p` | save the selected recommendation as a preset (in the fit overlay; `P` replaces) |
 | `d` | run doctor |
@@ -472,7 +473,7 @@ Slash commands include `/start`, `/restart`, `/stop`, `/dismiss`, `/router`, `/l
 
 ## Router mode
 
-Router mode writes a deterministic `models.ini` with one section per `[models.*]` entry. `[defaults]` becomes `[*]`, and each model section contains its resolved options. The file is regenerated on router start, `router reload`, and the TUI reload action.
+Router mode writes a deterministic `models.ini` with one section per `[models.*]` entry. `[defaults]` becomes `[*]`, including defaults extras, and each model section contains its resolved options plus only that model's own extras. A bare extra is written as `flag = true`. The file is regenerated on router start, `router reload`, and the TUI reload action.
 
 Only router-level options are passed on the command line:
 
@@ -573,7 +574,7 @@ Tests cover config parsing/merging/editing, group warm sets, effective-config di
 
 - Only AMD sysfs telemetry is implemented; NVIDIA/Intel need new backends.
 - One standalone server and one router are managed per state directory.
-- The editor can reset launch-option overrides, but not `model`, `path`, `alias` or `extra` keys.
+- The editor can add, edit and reset `extra` flags, but still cannot change `model`, `path` or `alias` directly.
 - Standalone servers are restarted while a wool process is attached, or under a detached `wool supervise` supervisor. The default in-session policy is `never`, so automatic restarts are opt-in; `wool supervise` is itself opt-in. Router-managed models are supervised by `llama-server` itself. A supervised instance is not a system service; use systemd if you need durable service management.
 - VRAM estimates fall back to a file-size approximation, and say so, when tensor metadata, a quantisation type or a tensor name is unsupported, or when a sliding-window layer pattern is unknown. Speculative decoding buffers are not modelled.
 - `wool fit` is advisory and inherits the estimator's approximation. It never recommends an over-budget configuration, but the recommendation is a starting point with headroom, not a guarantee.

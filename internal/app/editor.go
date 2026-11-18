@@ -16,10 +16,11 @@ import (
 // editorField is one TOML key that can be changed from the TUI.
 type editorField struct {
 	label  string
-	table  string // full TOML table, e.g. presets.foo.sampling
+	table  string // full TOML table, e.g. presets.foo.extra
 	key    string // TOML key inside the table
 	value  string // current value, TOML-formatted
-	kind   string // "int", "float", "string", "bool"
+	kind   string // "int", "float", "string", "bool", "extra"
+	extra  bool
 	source config.Provenance
 }
 
@@ -36,6 +37,7 @@ type editor struct {
 
 	input   textinput.Model
 	editing bool
+	adding  bool
 	visible int
 	err     string
 
@@ -101,6 +103,18 @@ func (m *Model) openEditor() {
 		{label: "sampling.mirostat", table: samplingTable, key: "mirostat", value: strconv.Itoa(r.Sampling.Mirostat), kind: "int"},
 		{label: "sampling.seed", table: samplingTable, key: "seed", value: strconv.Itoa(r.Sampling.Seed), kind: "int"},
 	}
+	extraTable := table + ".extra"
+	for _, flag := range config.ExtraFlags(r.Extra) {
+		e.fields = append(e.fields, editorField{
+			label:  config.ExtraFieldName(flag),
+			table:  extraTable,
+			key:    flag,
+			value:  quoteTOML(r.Extra[flag]),
+			kind:   "extra",
+			extra:  true,
+			source: sources[config.ExtraFieldName(flag)],
+		})
+	}
 	for i := range e.fields {
 		src, ok := sources[e.fields[i].label]
 		if !ok {
@@ -120,9 +134,11 @@ func (m *Model) openEditor() {
 	m.editor = e
 }
 
-// previewFor computes the unsaved estimate for a draft configuration.
+// quoteTOML formats a string as a TOML basic string.
 func quoteTOML(s string) string {
-	return `"` + strings.ReplaceAll(s, `"`, `\"`) + `"`
+	s = strings.ReplaceAll(s, `\`, `\\`)
+	s = strings.ReplaceAll(s, `"`, `\"`)
+	return `"` + s + `"`
 }
 
 func fmtFloat(f float64) string {
@@ -142,7 +158,8 @@ func (m *Model) editorView() string {
 	}
 	bodyH := h - 4
 	preview := m.editorPreviewLines(w - 4)
-	visible := bodyH - 1 - len(preview)
+	notes := e.extraNotes()
+	visible := bodyH - 1 - len(notes) - len(preview)
 	if visible < 1 {
 		visible = 1
 	}
@@ -158,14 +175,24 @@ func (m *Model) editorView() string {
 		header = "unsaved fit draft · ctrl+s writes " + e.path
 	}
 	body = append(body, st.Muted.Render(header))
+	for _, note := range notes {
+		style := st.Muted
+		if strings.Contains(note, "duplicates") {
+			style = st.Warn
+		}
+		body = append(body, style.Render(ui.Fit(note, w-4)))
+	}
 	for i := start; i < end; i++ {
 		f := e.fields[i]
 		mark := " "
 		if i == e.sel {
 			mark = "▸"
 		}
-		suffix := st.Muted.Render("  " + f.source.Source)
-		line := fmt.Sprintf("%s %-26s %-8s %s", mark, f.label, f.value, suffix)
+		suffix := "  " + f.source.Source
+		if f.extra && f.value == `""` {
+			suffix += " · bare"
+		}
+		line := fmt.Sprintf("%s %-26s %-8s %s", mark, f.label, f.value, st.Muted.Render(suffix))
 		if i == e.sel {
 			body = append(body, st.Selected.Render(ui.Fit(line, w-4)))
 		} else {
@@ -177,7 +204,7 @@ func (m *Model) editorView() string {
 	if len(body) > bodyH {
 		body = body[:bodyH]
 	}
-	hint := "enter edit · backspace reset · F fit · esc close"
+	hint := "enter edit · a add flag · backspace reset · x remove · F fit · esc close"
 	if e.dirty {
 		hint = "fit draft · ctrl+s save · esc discard"
 	}
@@ -191,6 +218,9 @@ func (m *Model) editorView() string {
 	if e.editing {
 		out = append(out, "")
 		out = append(out, strings.Repeat(" ", left)+st.Accent.Render("new value: ")+e.input.View())
+	} else if e.adding {
+		out = append(out, "")
+		out = append(out, strings.Repeat(" ", left)+st.Accent.Render("new flag [name=value]: ")+e.input.View())
 	}
 	if e.err != "" {
 		out = append(out, strings.Repeat(" ", left)+st.Bad.Render(e.err))
@@ -198,11 +228,31 @@ func (m *Model) editorView() string {
 	return strings.Join(out, "\n")
 }
 
+// extraNotes keeps the unmodelled-extras caveat and any first-class conflicts
+// visible without scrolling. Warnings stay advisory; the write still happens.
+func (e *editor) extraNotes() []string {
+	notes := []string{"extras are not in the VRAM estimate"}
+	for _, warning := range config.ExtraConflictWarnings(e.base.Extra) {
+		notes = append(notes, warning)
+	}
+	return notes
+}
+
+func fieldSourceKey(f editorField) string {
+	if f.extra {
+		return config.ExtraFieldName(f.key)
+	}
+	return f.label
+}
+
 // updateEditor handles keys while the editor overlay is open.
 func (m *Model) updateEditor(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	e := m.editor
 	if e.fit != nil {
 		return m.updateFitOverlay(msg)
+	}
+	if e.adding {
+		return m.updateExtraFlagInput(msg)
 	}
 	if e.editing {
 		switch msg.String() {
@@ -250,6 +300,12 @@ func (m *Model) updateEditor(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.openFitOverlay()
 	case "ctrl+s":
 		m.saveFitDraft()
+	case "a":
+		if e.dirty {
+			m.setToast("save the fit draft with ctrl+s or press esc to discard it")
+			return m, nil
+		}
+		m.startExtraFlagInput()
 	case "j", "down":
 		e.sel = clamp(e.sel+1, 0, len(e.fields)-1)
 		e.ensureScroll()
@@ -262,7 +318,7 @@ func (m *Model) updateEditor(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "G", "end":
 		e.sel = len(e.fields) - 1
 		e.ensureScroll()
-	case "backspace", "delete":
+	case "backspace", "delete", "x":
 		if e.dirty {
 			m.setToast("save the fit draft with ctrl+s or press esc to discard it")
 			return m, nil
@@ -285,10 +341,17 @@ func (m *Model) updateEditor(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.editor.table = table
 		m.editor.sel = clamp(sel, 0, len(m.editor.fields)-1)
 		next := config.SourceBuiltin
-		if src, ok := m.editor.sources[f.label]; ok {
-			next = src.Source
+		key := fieldSourceKey(f)
+		if _, ok := m.editor.sources[key]; ok {
+			next = m.editor.sources[key].Source
+		} else if f.extra {
+			next = "removed"
 		}
-		m.setToast("reset " + f.label + " to " + next)
+		verb := "reset "
+		if f.extra {
+			verb = "removed "
+		}
+		m.setToast(verb + f.label + " to " + next)
 		return m, nil
 	case "enter", " ":
 		if e.dirty {
@@ -329,6 +392,84 @@ func (m *Model) updateEditor(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func (m *Model) startExtraFlagInput() {
+	e := m.editor
+	e.adding = true
+	e.editing = false
+	e.err = ""
+	e.input = textinput.New()
+	e.input.CharLimit = 120
+	e.input.Width = 40
+	e.input.Focus()
+}
+
+func (m *Model) updateExtraFlagInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	e := m.editor
+	switch msg.String() {
+	case "esc":
+		e.adding = false
+		e.err = ""
+		e.input.Blur()
+		return m, nil
+	case "enter":
+		if err := m.addExtraFlag(e.input.Value()); err != nil {
+			e.err = err.Error()
+			return m, nil
+		}
+		return m, nil
+	}
+	var cmd tea.Cmd
+	e.input, cmd = e.input.Update(msg)
+	return m, cmd
+}
+
+// addExtraFlag writes a new extra to the current layer. "name=value" sets a
+// value; a bare name (or an empty value) emits a bare llama-server flag.
+func (m *Model) addExtraFlag(raw string) error {
+	e := m.editor
+	name, value, _ := strings.Cut(strings.TrimSpace(raw), "=")
+	flag, err := config.NormalizeExtraFlag(name)
+	if err != nil {
+		return err
+	}
+	value = strings.TrimSpace(value)
+	formatted := quoteTOML(value)
+	table := e.table
+
+	if err := config.SetValue(e.path, table+".extra", flag, formatted); err != nil {
+		return err
+	}
+	m.reloadConfig()
+	m.openEditor()
+	if m.editor == nil {
+		return nil
+	}
+	m.editor.table = table
+	if idx := findEditorField(m.editor, config.ExtraFieldName(flag)); idx >= 0 {
+		m.editor.sel = idx
+		m.editor.ensureScroll()
+	}
+
+	notice := "added extra " + config.ExtraFieldName(flag)
+	if value == "" {
+		notice += " (bare)"
+	}
+	if conflict := config.ConflictingField(flag); conflict != "" {
+		notice += " · warning: overrides " + conflict
+	}
+	m.setToast(notice)
+	return nil
+}
+
+func findEditorField(e *editor, label string) int {
+	for i, f := range e.fields {
+		if f.label == label {
+			return i
+		}
+	}
+	return -1
+}
+
 func (e *editor) ensureScroll() {
 	visible := e.visible
 	if visible <= 0 {
@@ -347,13 +488,16 @@ func (e *editor) ensureScroll() {
 
 func unquoteTOML(s string) string {
 	if len(s) >= 2 && strings.HasPrefix(s, `"`) && strings.HasSuffix(s, `"`) {
+		if value, err := strconv.Unquote(s); err == nil {
+			return value
+		}
 		return s[1 : len(s)-1]
 	}
 	return s
 }
 
 func validateField(f editorField, value string) error {
-	if value == "" {
+	if value == "" && f.kind != "extra" {
 		return fmt.Errorf("%s cannot be empty", f.label)
 	}
 	switch f.kind {
@@ -373,7 +517,7 @@ func validateField(f editorField, value string) error {
 
 // editorValue formats a user string for TOML.
 func editorValue(f editorField, raw string) string {
-	if f.kind == "string" {
+	if f.kind == "string" || f.kind == "extra" {
 		return quoteTOML(raw)
 	}
 	return raw

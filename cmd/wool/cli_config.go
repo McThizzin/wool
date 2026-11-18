@@ -122,10 +122,11 @@ type explainField struct {
 }
 
 type explainOutput struct {
-	Target string         `json:"target"`
-	Kind   string         `json:"kind"`
-	Model  string         `json:"model"`
-	Fields []explainField `json:"fields"`
+	Target   string         `json:"target"`
+	Kind     string         `json:"kind"`
+	Model    string         `json:"model"`
+	Fields   []explainField `json:"fields"`
+	Warnings []string       `json:"warnings,omitempty"`
 }
 
 // cmdConfigExplain prints every resolved launch option with the layer that
@@ -167,8 +168,13 @@ func cmdConfigExplain(cfgPath string, args []string) int {
 		return 1
 	}
 
-	out := explainOutput{Target: target, Kind: kind, Model: r.ModelID}
-	for _, field := range config.OptionFields() {
+	out := explainOutput{
+		Target:   target,
+		Kind:     kind,
+		Model:    r.ModelID,
+		Warnings: config.ExtraConflictWarnings(r.Extra),
+	}
+	for _, field := range config.FieldNames(r) {
 		p := sources[field]
 		out.Fields = append(out.Fields, explainField{
 			Field:  field,
@@ -184,10 +190,17 @@ func cmdConfigExplain(cfgPath string, args []string) int {
 	fmt.Printf("%s (%s), model %s\n", out.Target, out.Kind, out.Model)
 	fmt.Fprintln(w, "FIELD\tVALUE\tSOURCE\tLAYER")
 	for _, f := range out.Fields {
-		fmt.Fprintf(w, "%s\t%v\t%s\t%s\n", f.Field, f.Value, f.Source, f.Layer)
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", f.Field, config.DisplayFieldValue(f.Field, f.Value), f.Source, f.Layer)
 	}
 	w.Flush()
+	printConfigWarnings(out.Warnings)
 	return 0
+}
+
+func printConfigWarnings(warnings []string) {
+	for _, warning := range warnings {
+		fmt.Fprintln(os.Stderr, "wool: warning: "+warning)
+	}
 }
 
 // resolveNamedTarget resolves a preset or model by name.
@@ -204,11 +217,12 @@ func resolveNamedTarget(cfg *config.Config, target string) (config.Resolved, map
 }
 
 type diffOutput struct {
-	Target  string             `json:"target"`
-	Kind    string             `json:"kind"`
-	Model   string             `json:"model"`
-	Against string             `json:"against"`
-	Fields  []config.DiffField `json:"fields"`
+	Target   string             `json:"target"`
+	Kind     string             `json:"kind"`
+	Model    string             `json:"model"`
+	Against  string             `json:"against"`
+	Fields   []config.DiffField `json:"fields"`
+	Warnings []string           `json:"warnings,omitempty"`
 }
 
 // cmdConfigDiff prints only the resolved launch options that differ from a
@@ -267,23 +281,32 @@ func cmdConfigDiff(cfgPath string, args []string) int {
 		fmt.Fprintf(os.Stderr, "wool: %v\n", err)
 		return 1
 	}
-	out := diffOutput{Target: target, Kind: kind, Model: r.ModelID, Against: res.Against, Fields: res.Fields}
+	out := diffOutput{
+		Target:   target,
+		Kind:     kind,
+		Model:    r.ModelID,
+		Against:  res.Against,
+		Fields:   res.Fields,
+		Warnings: config.ExtraConflictWarnings(r.Extra),
+	}
 	if asJSON {
 		return writeJSON(out)
 	}
 	if len(res.Fields) == 0 {
+		printConfigWarnings(out.Warnings)
 		return 0
 	}
 	fmt.Printf("%s (%s), model %s, against %s\n", out.Target, out.Kind, out.Model, out.Against)
 	w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
 	fmt.Fprintln(w, "FIELD\tTARGET\tAGAINST")
 	for _, f := range res.Fields {
-		fmt.Fprintf(w, "%s\t%v (%s %s)\t%v (%s %s)\n",
+		fmt.Fprintf(w, "%s\t%s (%s %s)\t%s (%s %s)\n",
 			f.Field,
-			f.Target.Value, f.Target.Source, f.Target.Layer,
-			f.Against.Value, f.Against.Source, f.Against.Layer)
+			config.DisplayFieldValue(f.Field, f.Target.Value), f.Target.Source, f.Target.Layer,
+			config.DisplayFieldValue(f.Field, f.Against.Value), f.Against.Source, f.Against.Layer)
 	}
 	w.Flush()
+	printConfigWarnings(out.Warnings)
 	return 0
 }
 

@@ -176,6 +176,68 @@ func TestRenderRouterINI(t *testing.T) {
 	}
 }
 
+func TestExtraArgsNormalizeAndBareFlags(t *testing.T) {
+	args := extraArgs(map[string]string{
+		"--spec-type": "draft-mtp",
+		"bare":        "",
+	})
+	want := []string{"--bare", "--spec-type", "draft-mtp"}
+	if len(args) != len(want) {
+		t.Fatalf("args = %v, want %v", args, want)
+	}
+	for i := range want {
+		if args[i] != want[i] {
+			t.Fatalf("args = %v, want %v", args, want)
+		}
+	}
+
+	args = extraArgs(map[string]string{"--flag": "first", "flag": "second"})
+	if len(args) != 2 || args[0] != "--flag" || args[1] != "second" {
+		t.Fatalf("normalized duplicate = %v", args)
+	}
+}
+
+func TestRenderRouterINIExtras(t *testing.T) {
+	cfg, err := config.Parse([]byte(`
+[defaults.extra]
+shared = "base"
+bare = ""
+ctx-size = "16384"
+
+[models.a]
+path = "a.gguf"
+
+[models.a.extra]
+shared = "model"
+local = "1"
+gpu-layers = "10"
+model = "override.gguf"
+alias = "override"
+
+[models.b]
+path = "b.gguf"
+`), "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := RenderRouterINI(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sections := parseINI(t, string(data))
+	globals := sections["*"]
+	if globals["shared"] != "base" || globals["bare"] != "true" || globals["ctx-size"] != "16384" {
+		t.Fatalf("[*] extras = %+v", globals)
+	}
+	if got := sections["a"]; got["shared"] != "model" || got["local"] != "1" || got["gpu-layers"] != "10" ||
+		got["model"] != "override.gguf" || got["alias"] != "override" {
+		t.Fatalf("[a] extras = %+v", got)
+	}
+	if _, ok := sections["b"]["shared"]; ok {
+		t.Fatalf("defaults extras should not be repeated in [b]: %+v", sections["b"])
+	}
+}
+
 func parseINI(t *testing.T, text string) map[string]map[string]string {
 	t.Helper()
 	out := map[string]map[string]string{}

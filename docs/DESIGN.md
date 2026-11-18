@@ -219,13 +219,16 @@ Built-in defaults are a separate lowest layer, not values written into
 `c.Defaults` while loading. That keeps an explicit `[defaults]` key
 distinguishable from a built-in value. `config.ResolveDetailed` returns the
 resolved options plus a source map (`built-in`, `defaults`, `model`, `preset`)
-used by the editor and `wool config explain`.
+used by the editor and `wool config explain`. Extras are normalized to flag
+names without leading dashes and appear as `extra.<flag>` fields in the same
+map, so inherited extras and their source layer are visible.
 
 `config.Diff` compares a resolved target with either the defaults layer or the
 target's model and returns only fields whose values differ, in canonical option
-order. A preset defaults to its model, which answers "what does this preset
-change?"; a model defaults to the defaults layer. Each side keeps its value,
-source and exact TOML layer, so sampling keys are compared individually.
+order. Extras follow the fixed options, sorted by flag name. A preset defaults
+to its model, which answers "what does this preset change?"; a model defaults to
+the defaults layer. Each side keeps its value, source and exact TOML layer, so
+sampling keys are compared individually.
 `wool config diff` and the TUI `D` overlay use the same function and print
 nothing when the list is empty.
 
@@ -258,6 +261,11 @@ config check [--strict] [--json]` exposes this directly. Strict mode enables
 `config.Load`/`Parse` stay non-strict so older configs keep loading, and
 `wool run --strict` keeps its unrelated smoke-test meaning.
 
+An extra whose flag matches a first-class launch option is a warning, not an
+error. The TUI shows it next to the extras list, and `config explain`/`config
+diff` include it in `warnings`, because appending the extra last is an explicit
+choice to override the generated flag.
+
 A missing model file is **not** a load error. It is reported by
 `Config.Warnings()`, `wool doctor` and the TUI as a warning, so a
 config can be prepared before the weights are downloaded.
@@ -269,9 +277,11 @@ that changes only the requested key and preserves the rest of the file's
 comments and ordering. `config.SetValues` applies several key updates in one
 atomic write; `SetValue` is its single-key wrapper. `config.RemoveValue` is the
 counterpart: it deletes one scalar key, leaves an empty table header in place,
-and refuses multi-line or inline collection values. After a save or reset the
-config is reloaded and the relevant caches are invalidated. The TOML file
-remains the source of truth; there is no hidden state database.
+and refuses multi-line or inline collection values. Extras go through the same
+writer on `[<target>.extra]`; reset removes only that layer's key so a lower
+layer can show through. After a save or reset the config is reloaded and the
+relevant caches are invalidated. The TOML file remains the source of truth;
+there is no hidden state database.
 
 ### Model discovery and disk reporting
 
@@ -310,9 +320,11 @@ never hashes or reads model contents.
 ```
 
 `[models.<id>.extra]` / `[presets.<name>.extra]` keys become flags. Keys may
-be written with or without leading dashes; an empty value produces a bare
-flag (for example `spec-type = "draft-mtp"` becomes
-`--spec-type draft-mtp`).
+be written with or without leading dashes; resolving and the editor store the
+normalized name without dashes. An empty value produces a bare flag (for
+example `spec-type = "draft-mtp"` becomes `--spec-type draft-mtp`, while
+`no-warmup = ""` becomes `--no-warmup`). Extras that duplicate a first-class
+option are reported as warnings but are still appended last.
 
 Port selection is in `daemon.ChoosePort`:
 
@@ -440,10 +452,12 @@ gpu-layers = 999
 ...
 ```
 
-The `[*]` section holds `[defaults]`; each model section holds its resolved
-options and extras. Sections are sorted by model ID. The file is written to a
-temporary file, chmod `0600`, and renamed atomically. It is regenerated on
-router start, `router reload`, and the TUI's reload action.
+The `[*]` section holds `[defaults]`, including defaults extras; each model
+section holds its resolved options and only that model's own extras, so
+inherited values are not repeated. A bare extra is written as `flag = true`.
+Sections are sorted by model ID. The file is written to a temporary file, chmod
+`0600`, and renamed atomically. It is regenerated on router start, `router
+reload`, and the TUI's reload action.
 
 Only host, port, models-max, margin, autoload, sleep and metrics are passed on
 the router command line:
@@ -1266,8 +1280,9 @@ criteria. The limitations below are the current state, not the plan.
 - Only AMD sysfs telemetry is implemented; NVIDIA/Intel need new backends.
 - The TUI manages one standalone server and one router, not arbitrary named
   instances. The daemon layer already uses names and can grow this later.
-- The editor can reset launch-option overrides, but not `model`, `path`,
-  `alias` or `extra` keys.
+- The editor can add, edit and reset `extra` flags, but still cannot change
+  `model`, `path` or `alias` directly. Arbitrary extras are outside the VRAM
+  estimate.
 - `wool fit` is advisory and inherits the estimator's approximation. It never
   recommends an over-budget configuration. Saving a preset is explicit and
   updates only the fit-controlled keys; applying a recommendation to an

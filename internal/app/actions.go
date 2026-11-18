@@ -364,8 +364,8 @@ func (m *Model) showConfigDiffFor(id, kind string) {
 	for _, f := range result.Fields {
 		lines = append(lines,
 			f.Field,
-			fmt.Sprintf("  target   %v  (%s %s)", f.Target.Value, f.Target.Source, f.Target.Layer),
-			fmt.Sprintf("  against  %v  (%s %s)", f.Against.Value, f.Against.Source, f.Against.Layer),
+			fmt.Sprintf("  target   %s  (%s %s)", config.DisplayFieldValue(f.Field, f.Target.Value), f.Target.Source, f.Target.Layer),
+			fmt.Sprintf("  against  %s  (%s %s)", config.DisplayFieldValue(f.Field, f.Against.Value), f.Against.Source, f.Against.Layer),
 			"",
 		)
 	}

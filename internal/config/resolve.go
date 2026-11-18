@@ -37,10 +37,7 @@ func (c *Config) Resolve(modelID string, preset *PresetConfig) (Resolved, error)
 		threadsBatch = threads
 	}
 	sampling := applySampling(DefaultSampling(), opts.Sampling)
-	extra := map[string]string{}
-	for k, v := range opts.Extra {
-		extra[k] = v
-	}
+	extra := NormalizeExtraMap(opts.Extra)
 
 	return Resolved{
 		ModelID:      modelID,
@@ -115,8 +112,8 @@ func mergeOptions(dst *Options, src Options) {
 		if dst.Extra == nil {
 			dst.Extra = map[string]string{}
 		}
-		for k, v := range src.Extra {
-			dst.Extra[k] = v
+		for flag, v := range NormalizeExtraMap(src.Extra) {
+			dst.Extra[flag] = v
 		}
 	}
 }

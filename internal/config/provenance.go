@@ -68,11 +68,19 @@ func (c *Config) ResolveDetailed(modelID, presetName string) (Resolved, map[stri
 	if err != nil {
 		return Resolved{}, nil, err
 	}
-	sources := make(map[string]Provenance, len(optionFields))
+	return r, c.sourcesFor(r, r.ModelID, presetName), nil
+}
+
+// sourcesFor reports where each resolved option, including extras, came from.
+func (c *Config) sourcesFor(r Resolved, modelID, presetName string) map[string]Provenance {
+	sources := make(map[string]Provenance, len(optionFields)+len(r.Extra))
 	for _, field := range optionFields {
-		sources[field] = c.provenance(r.ModelID, presetName, field)
+		sources[field] = c.provenance(modelID, presetName, field)
 	}
-	return r, sources, nil
+	for _, flag := range ExtraFlags(r.Extra) {
+		sources[ExtraFieldName(flag)] = c.extraProvenance(modelID, presetName, flag)
+	}
+	return sources
 }
 
 // provenance checks layers from highest to lowest precedence.
@@ -89,6 +97,28 @@ func (c *Config) provenance(modelID, presetName, field string) Provenance {
 		return Provenance{Source: SourceDefaults, Layer: "defaults"}
 	}
 	return Provenance{Source: SourceBuiltin, Layer: "built-in"}
+}
+
+// extraProvenance uses the same precedence as option provenance, but looks in
+// each layer's extra map instead of the fixed option fields.
+func (c *Config) extraProvenance(modelID, presetName, flag string) Provenance {
+	if presetName != "" {
+		if p, ok := c.Presets[presetName]; ok && extraSet(p.Options, flag) {
+			return Provenance{Source: SourcePreset, Layer: "presets." + presetName}
+		}
+	}
+	if m, ok := c.Models[modelID]; ok && extraSet(m.Options, flag) {
+		return Provenance{Source: SourceModel, Layer: "models." + modelID}
+	}
+	if extraSet(c.Defaults, flag) {
+		return Provenance{Source: SourceDefaults, Layer: "defaults"}
+	}
+	return Provenance{Source: SourceBuiltin, Layer: "built-in"}
+}
+
+func extraSet(o Options, flag string) bool {
+	_, ok := NormalizeExtraMap(o.Extra)[flag]
+	return ok
 }
 
 func optionFieldSet(o Options, field string) bool {
@@ -183,6 +213,6 @@ func (c *Config) ResolveDefaults() Resolved {
 		Jinja:        derefBool(opts.Jinja),
 		Metrics:      derefBool(opts.Metrics),
 		Sampling:     sampling,
-		Extra:        map[string]string{},
+		Extra:        NormalizeExtraMap(opts.Extra),
 	}
 }

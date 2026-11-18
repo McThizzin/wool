@@ -33,7 +33,7 @@ Status values: `planned`, `in progress`, `shipped`, `blocked`, `dropped`.
 | M5.1 — Model discovery | P1 | M | none | shipped | [m5-01-model-discovery.md](m5-01-model-discovery.md) |
 | M5.2 — Disk and orphan view | P2 | S | M5.1 | shipped | [m5-02-disk-and-orphan-view.md](m5-02-disk-and-orphan-view.md) |
 | M5.3 — Config validation with line numbers | P2 | S/M | none | shipped | [m5-03-config-validation-with-line-numbers.md](m5-03-config-validation-with-line-numbers.md) |
-| M5.4 — Extra-flag editing and provenance | P1 | S/M | M1.1 | planned | [m5-04-extra-flag-editing-and-provenance.md](m5-04-extra-flag-editing-and-provenance.md) |
+| M5.4 — Extra-flag editing and provenance | P1 | S/M | M1.1 | shipped | [m5-04-extra-flag-editing-and-provenance.md](m5-04-extra-flag-editing-and-provenance.md) |
 | M5.5 — Flag catalog and fuzzy reference | P2 | M | M5.3, M5.4 | planned | [m5-05-flag-catalog-and-fuzzy-reference.md](m5-05-flag-catalog-and-fuzzy-reference.md) |
 | M5.6 — Export a preset as a service | P2 | S/M | M5.4 | planned | [m5-06-export-a-preset-as-a-service.md](m5-06-export-a-preset-as-a-service.md) |
 | M5.7 — Preset cloning and templates | P3 | M | M1.1, M5.4 | planned | [m5-07-preset-cloning-and-templates.md](m5-07-preset-cloning-and-templates.md) |
