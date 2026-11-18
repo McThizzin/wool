@@ -48,6 +48,7 @@ Usage:
   wool router [start|stop|status|models|load ID|unload ID|load-group NAME|groups|reload|ini]
   wool config path                     print the config path
   wool config init [--force] [PATH]    write a sample config
+  wool config check [--strict] [--json]  validate the config (strict rejects typos)
   wool config explain TARGET [--json]  show each value and where it came from
   wool config diff TARGET [--against defaults|model] [--json]
   wool version
@@ -188,6 +189,13 @@ func extractConfig(args []string) (string, []string) {
 func openTUI(cfgPath string) int {
 	cfg, err := loadConfig(cfgPath)
 	if err != nil {
+		// A terminal can show the parse error in an overlay. Scripts and
+		// redirected runs still get the same text on stderr.
+		if interactiveTerminal() {
+			if runErr := app.RunError(err, cfgPath); runErr == nil {
+				return 1
+			}
+		}
 		printConfigError(cfgPath, err)
 		return 1
 	}
@@ -198,6 +206,16 @@ func openTUI(cfgPath string) int {
 	return 0
 }
 
+func interactiveTerminal() bool {
+	for _, f := range []*os.File{os.Stdin, os.Stdout} {
+		info, err := f.Stat()
+		if err != nil || info.Mode()&os.ModeCharDevice == 0 {
+			return false
+		}
+	}
+	return true
+}
+
 func loadConfig(path string) (*config.Config, error) {
 	if _, err := os.Stat(path); err != nil {
 		return nil, err
@@ -206,7 +224,13 @@ func loadConfig(path string) (*config.Config, error) {
 }
 
 func printConfigError(path string, err error) {
-	fmt.Fprintf(os.Stderr, "wool: config %s: %v\n", path, err)
+	if structured := config.AsErrors(err); len(structured) > 0 {
+		for _, e := range structured {
+			fmt.Fprintf(os.Stderr, "wool: %s\n", e)
+		}
+	} else {
+		fmt.Fprintf(os.Stderr, "wool: config %s: %v\n", path, err)
+	}
 	if errors.Is(err, os.ErrNotExist) {
 		fmt.Fprintf(os.Stderr, "Create one with: wool config init\n")
 	}

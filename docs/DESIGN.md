@@ -247,6 +247,17 @@ sampling ranges, invalid ports, negative router limits, alert thresholds out
 of range, a non-positive alert cooldown, and webhook URLs that are not HTTP or
 HTTPS.
 
+`config.ParseWithOptions` decodes through a go-toml `Decoder`. A decode error
+is converted into `config.Error` (or `config.Errors` for several strict
+failures) with the file, one-indexed line and column, the key and the message
+from `toml.DecodeError`. `Error()` renders `file:line:col: message`; structural
+validation errors carry no position and render as `file: message`. `wool
+config check [--strict] [--json]` exposes this directly. Strict mode enables
+`DisallowUnknownFields` to catch typos; map fields such as `[*.extra]` and
+`[themes.*.colors]` remain open because they decode into `map` fields. Plain
+`config.Load`/`Parse` stay non-strict so older configs keep loading, and
+`wool run --strict` keeps its unrelated smoke-test meaning.
+
 A missing model file is **not** a load error. It is reported by
 `Config.Warnings()`, `wool doctor` and the TUI as a warning, so a
 config can be prepared before the weights are downloaded.
@@ -539,7 +550,9 @@ The layout follows `ref/esp_term`:
 Below 84 columns the sidebar disappears and the main panel uses the full
 width. Panels use ANSI-aware fitting and are clipped to the terminal height.
 The editor and doctor/help overlays replace the normal body and keep the
-footer.
+footer. When startup cannot load the config, the same overlay path shows a
+"config error" panel with the `file:line:col: message` text; dismissing it
+quits because there is no usable config.
 
 ### Refresh loop
 
@@ -1149,6 +1162,7 @@ wool alerts [--json]                 evaluate alert rules against current state
 wool router [start|stop|status|models|load ID|unload ID|load-group NAME|groups|reload|ini]
 wool config path                     print the config path
 wool config init [--force] [PATH]    write a sample config
+wool config check [--strict] [--json]  validate the config (strict rejects typos)
 wool config explain TARGET [--json]  show each value and its source layer
 wool config diff TARGET [--against defaults|model] [--json]
 wool version

@@ -1,6 +1,7 @@
 package config
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"net/url"
@@ -14,22 +15,44 @@ import (
 	"wool/internal/theme"
 )
 
+// ParseOptions controls how a config document is decoded. Strict mode rejects
+// keys that do not match the schema; map fields such as [*.extra] and
+// [themes.*.colors] accept arbitrary keys in both modes.
+type ParseOptions struct {
+	Strict bool
+}
+
 func Load(path string) (*Config, error) {
+	return LoadWithOptions(path, ParseOptions{})
+}
+
+// LoadWithOptions reads and decodes a config file with the given options.
+func LoadWithOptions(path string, opts ParseOptions) (*Config, error) {
 	b, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
-	return Parse(b, path)
+	return ParseWithOptions(b, path, opts)
 }
 
 func Parse(b []byte, source string) (*Config, error) {
+	return ParseWithOptions(b, source, ParseOptions{})
+}
+
+// ParseWithOptions decodes and validates a config document. Decode errors are
+// returned as *Error or Errors with file, line, column and key information.
+func ParseWithOptions(b []byte, source string, opts ParseOptions) (*Config, error) {
 	var cfg Config
-	if err := toml.Unmarshal(b, &cfg); err != nil {
-		return nil, fmt.Errorf("parse %s: %w", source, err)
+	dec := toml.NewDecoder(bytes.NewReader(b))
+	if opts.Strict {
+		dec.DisallowUnknownFields()
+	}
+	if err := dec.Decode(&cfg); err != nil {
+		return nil, structuredDecodeError(source, err)
 	}
 	cfg.ApplyDefaults()
 	if err := cfg.Validate(); err != nil {
-		return nil, fmt.Errorf("%s: %w", source, err)
+		return nil, &Error{File: source, Message: err.Error(), Err: err}
 	}
 	return &cfg, nil
 }

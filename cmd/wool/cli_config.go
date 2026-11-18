@@ -12,13 +12,15 @@ import (
 
 func cmdConfig(cfgPath string, args []string) int {
 	if len(args) == 0 {
-		fmt.Print("usage: wool config path|init|explain|diff\n")
+		fmt.Print("usage: wool config path|init|check|explain|diff\n")
 		return 2
 	}
 	switch args[0] {
 	case "path":
 		fmt.Println(cfgPath)
 		return 0
+	case "check":
+		return cmdConfigCheck(cfgPath, args[1:])
 	case "explain":
 		return cmdConfigExplain(cfgPath, args[1:])
 	case "diff":
@@ -49,6 +51,67 @@ func cmdConfig(cfgPath string, args []string) int {
 		fmt.Fprintf(os.Stderr, "wool: unknown config command %q\n", args[0])
 		return 2
 	}
+}
+
+type configCheckError struct {
+	File    string `json:"file"`
+	Line    int    `json:"line"`
+	Column  int    `json:"column"`
+	Key     string `json:"key,omitempty"`
+	Message string `json:"message"`
+}
+
+type configCheckOutput struct {
+	OK     bool               `json:"ok"`
+	Strict bool               `json:"strict"`
+	Errors []configCheckError `json:"errors"`
+}
+
+// cmdConfigCheck validates the config without starting servers. --strict also
+// rejects keys that are not in the schema, while still allowing map fields.
+func cmdConfigCheck(cfgPath string, args []string) int {
+	fs := flag.NewFlagSet("config check", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	strict := fs.Bool("strict", false, "reject unknown keys")
+	asJSON := fs.Bool("json", false, "print JSON")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	if fs.NArg() != 0 {
+		fmt.Fprintln(os.Stderr, "usage: wool config check [--strict] [--json]")
+		return 2
+	}
+
+	_, err := config.LoadWithOptions(cfgPath, config.ParseOptions{Strict: *strict})
+	structured := config.AsErrors(err)
+	out := configCheckOutput{OK: err == nil, Strict: *strict, Errors: []configCheckError{}}
+	for _, e := range structured {
+		out.Errors = append(out.Errors, configCheckError{
+			File: e.File, Line: e.Line, Column: e.Column, Key: e.Key, Message: e.Message,
+		})
+	}
+	if err != nil && len(structured) == 0 {
+		out.Errors = append(out.Errors, configCheckError{File: cfgPath, Message: err.Error()})
+	}
+
+	if *asJSON {
+		code := writeJSON(out)
+		if err != nil {
+			return 1
+		}
+		return code
+	}
+	if err != nil {
+		for _, e := range structured {
+			fmt.Fprintf(os.Stderr, "wool: %s\n", e)
+		}
+		if len(structured) == 0 {
+			fmt.Fprintf(os.Stderr, "wool: config %s: %v\n", cfgPath, err)
+		}
+		return 1
+	}
+	fmt.Println("config OK")
+	return 0
 }
 
 type explainField struct {

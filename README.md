@@ -106,6 +106,7 @@ wool alerts [--json]                 evaluate alert rules against current state
 wool router [start|stop|status|models|load ID|unload ID|load-group NAME|groups|reload|ini]
 wool config path                     print the config path
 wool config init [--force] [PATH]    write a sample config
+wool config check [--strict] [--json]  validate the config (strict rejects typos)
 wool config explain TARGET [--json]  show each value and where it came from
 wool config diff TARGET [--against defaults|model] [--json]
 wool version
@@ -411,6 +412,8 @@ built-in defaults -> [defaults] -> [models.<id>] -> [presets.<name>]
 ```
 
 Unset keys inherit; explicit zero/false values are preserved. `threads = 0` resolves to `runtime.NumCPU()`, and `threads_batch = 0` follows `threads`.
+
+`wool config check` validates the config without starting anything. Malformed TOML is reported as `path:line:col: message`, so the position can be opened directly in an editor. `wool config check --strict` also rejects keys that are not in the schema, naming each unknown key with its line and column; map fields such as `[models.<id>.extra]`, `[presets.<name>.extra]` and `[themes.<name>.colors]` still accept arbitrary keys. `--json` emits `ok`, `strict` and an `errors` array for scripts. This is separate from `wool run --strict`, which still means "fail on smoke-test failure". When the TUI starts with an unreadable config, it shows the same message in a config error overlay instead of exiting silently; dismissing the overlay quits.
 
 `wool config explain TARGET` shows every effective launch option with the layer that supplied it (`built-in`, `defaults`, `model` or `preset`). Add `--json` for `value`, `source` and `layer` fields. In the editor, the same source is shown next to each row; `backspace` or `delete` removes that override and falls back to the next layer.
 

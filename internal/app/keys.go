@@ -37,6 +37,9 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		switch msg.String() {
 		case "esc", "enter", "q":
 			m.overlay = ""
+			if m.configError {
+				return m, tea.Quit
+			}
 		case "j", "down":
 			m.overlayScroll++
 		case "k", "up":

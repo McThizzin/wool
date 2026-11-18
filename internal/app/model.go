@@ -165,6 +165,7 @@ type Model struct {
 	overlay       string
 	overlayTitle  string
 	overlayScroll int
+	configError   bool // the overlay reports a fatal config load failure
 
 	endpointOpen   bool
 	endpointData   endpoint.Endpoint
@@ -276,7 +277,10 @@ type discoveryAddMsg struct {
 
 // Run starts the TUI. Servers keep running when it exits.
 func Run(cfg *config.Config, cfgPath string) error {
-	m := New(cfg, cfgPath)
+	return runModel(New(cfg, cfgPath))
+}
+
+func runModel(m *Model) error {
 	p := tea.NewProgram(m, tea.WithAltScreen())
 	_, err := p.Run()
 	m.usage.flushNow(m.meas, time.Now())
